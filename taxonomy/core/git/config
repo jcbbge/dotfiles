@@ -1,0 +1,49 @@
+# Core git configuration
+# taxonomy/core/git/config
+# This is symlinked to ~/.gitconfig
+
+[user]
+    name = jrgantt
+    email = jr.gantt@icloud.com
+
+[init]
+    defaultBranch = main
+
+[pull]
+    rebase = true
+
+[filter "lfs"]
+    clean = git-lfs clean -- %f
+    smudge = git-lfs smudge -- %f
+    process = git-lfs filter-process
+    required = true
+
+[alias]
+    um = "!git checkout main && git pull origin main"
+
+[core]
+    editor = zed --wait
+    hooksPath = ~/.config/git/hooks
+
+[credential]
+    helper = !aws codecommit credential-helper $@
+    UseHttpPath = true
+	name = jrgantt
+	email = jr.gantt@icloud.com
+[credential]
+	helper = !aws codecommit credential-helper $@
+	UseHttpPath = true
+[pull]
+	rebase = true
+[filter "lfs"]
+	clean = git-lfs clean -- %f
+	smudge = git-lfs smudge -- %f
+	process = git-lfs filter-process
+	required = true
+[alias]
+    um = "!git checkout main && git pull origin main"
+[init]
+	defaultBranch = main
+[core]
+	editor = vi
+	hooksPath = /Users/jcbbge/.config/git/hooks

@@ -1,0 +1,92 @@
+#!/bin/bash
+set -e
+
+DOTFILES_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+STATE_FILE="$DOTFILES_DIR/state.json"
+
+echo "🔧 Bootstrapping dotfiles from $DOTFILES_DIR"
+
+# Detect OS
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    OS="macos"
+    echo "📱 macOS detected"
+else
+    echo "❌ Unsupported OS: $OSTYPE"
+    exit 1
+fi
+
+# Install Homebrew if missing
+if ! command -v brew &> /dev/null; then
+    echo "🍺 Installing Homebrew..."
+    /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+    if [[ "$OS" == "macos" ]]; then
+        eval "$(/opt/homebrew/bin/brew shellenv)"
+    fi
+fi
+
+# Get active profile from state.json
+PROFILE=$(grep -o '"active_profile": "[^"]*"' "$STATE_FILE" | cut -d'"' -f4)
+echo "📂 Active profile: $PROFILE"
+
+# Install packages
+echo "📦 Installing packages..."
+brew bundle --file="$DOTFILES_DIR/pkgs/Brewfile.core"
+
+if [[ -f "$DOTFILES_DIR/pkgs/Brewfile.$PROFILE" ]]; then
+    brew bundle --file="$DOTFILES_DIR/pkgs/Brewfile.$PROFILE"
+fi
+
+# Symlink core configs
+echo "🔗 Setting up symlinks..."
+CORE_DIR="$DOTFILES_DIR/taxonomy/core"
+
+for item in "$CORE_DIR"/*; do
+    if [[ -d "$item" ]]; then
+        # Directory: link contents or the directory itself
+        name=$(basename "$item")
+        target="$HOME/.$name"
+        
+        if [[ -e "$target" && ! -L "$target" ]]; then
+            echo "  ⚠️  Backing up existing .$name to .$name.backup"
+            mv "$target" "$target.backup"
+        fi
+        
+        if [[ -L "$target" ]]; then
+            rm "$target"
+        fi
+        
+        ln -s "$item" "$target"
+        echo "  ✓  .$name"
+    elif [[ -f "$item" ]]; then
+        # File: link it
+        name=$(basename "$item")
+        target="$HOME/.$name"
+        
+        if [[ -e "$target" && ! -L "$target" ]]; then
+            echo "  ⚠️  Backing up existing .$name to .$name.backup"
+            mv "$target" "$target.backup"
+        fi
+        
+        if [[ -L "$target" ]]; then
+            rm "$target"
+        fi
+        
+        ln -s "$item" "$target"
+        echo "  ✓  .$name"
+    fi
+done
+
+# Update state.json with sync timestamp
+date_str=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    sed -i '' "s/\"last_sync\": null/\"last_sync\": \"$date_str\"/" "$STATE_FILE"
+else
+    sed -i "s/\"last_sync\": null/\"last_sync\": \"$date_str\"/" "$STATE_FILE"
+fi
+
+echo ""
+echo "✅ Done! Current stack:"
+grep -A6 '"current_stack"' "$STATE_FILE" | grep -E '"[a-z]+":' | sed 's/^[[:space:]]*/  /'
+echo ""
+echo "🔄 To switch profiles: edit state.json 'active_profile' and re-run ./install"
+echo "🧪 To experiment: put configs in taxonomy/experimental/ (not synced)"

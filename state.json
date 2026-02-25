@@ -1,0 +1,17 @@
+{
+  "active_profile": "personal",
+  "current_stack": {
+    "shell": "zsh",
+    "editor": "zed",
+    "terminal": "ghostty",
+    "theme": "tokyo-night"
+  },
+  "experimenting": [
+    "claude-code",
+    "opencode",
+    "goose",
+    "aider"
+  ],
+  "deprecated_gate": {},
+  "last_sync": "2026-02-25T17:00:00Z"
+}

@@ -1,0 +1,35 @@
+#!/bin/bash
+
+DOTFILES_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+STATE_FILE="$DOTFILES_DIR/state.json"
+
+echo "📊 Dotfiles Status"
+echo "=================="
+echo ""
+
+# Read state
+echo "🎯 Profile: $(grep -o '"active_profile": "[^"]*"' "$STATE_FILE" | cut -d'"' -f4)"
+echo ""
+
+echo "🧰 Current Stack:"
+grep -A6 '"current_stack"' "$STATE_FILE" | grep -E '"[a-z]+":' | sed 's/^[[:space:]]*/  /'
+echo ""
+
+echo "🧪 Experimenting:"
+EXPERIMENTS=$(grep -A1 '"experimenting":' "$STATE_FILE" | tail -1 | sed 's/^[[:space:]]*//' | sed 's/,*$//')
+if [[ "$EXPERIMENTS" == "[]" ]]; then
+    echo "  (nothing active)"
+else
+    echo "$EXPERIMENTS"
+fi
+echo ""
+
+echo "📂 Directory Status:"
+for layer in core ephemeral experimental deprecated; do
+    count=$(find "$DOTFILES_DIR/taxonomy/$layer" -type f 2>/dev/null | wc -l)
+    echo "  $layer/: $count files"
+done
+echo ""
+
+echo "🔍 Drift Check:"
+echo "  (not implemented yet - run: diff actual vs symlinked)"

@@ -1,0 +1,11 @@
+# Experimental configs - never commit
+taxonomy/experiment/
+taxonomy/experimental/
+
+# OS files
+.DS_Store
+*.backup
+
+# Temporary files
+*.tmp
+*.temp

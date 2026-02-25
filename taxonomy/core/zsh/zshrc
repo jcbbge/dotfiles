@@ -1,0 +1,524 @@
+# ============================================
+# .zshrc - Interactive Shell Configuration
+# ============================================
+# This file loads ONLY for interactive shells (terminals you type in).
+# Environment variables and PATH are already set by .zshenv.
+#
+# RULE: No exports here. Use aliases, functions, completions, prompt.
+
+# ============================================
+# Completions (cached - only regenerates when needed)
+# ============================================
+autoload -Uz compinit
+compinit -C
+
+# ============================================
+# Laravel Development Helpers
+# ============================================
+
+# Start any Laravel project - usage: laravel-start [directory] [port]
+laravel-start() {
+    local project_dir="${1:-.}"
+    local port="${2:-8000}"
+    
+    # If only a number provided, treat as port for current dir
+    if [[ "$1" =~ ^[0-9]+$ ]]; then
+        port="$1"
+        project_dir="."
+    fi
+    
+    # Resolve to absolute path
+    project_dir="$(cd "$project_dir" 2>/dev/null && pwd)" || {
+        echo "❌ Cannot find directory: $1"
+        return 1
+    }
+    
+    echo "🚀 Starting Laravel project: $project_dir"
+    echo "   Port: $port"
+    echo ""
+    
+    cd "$project_dir" || return 1
+    
+    # Check for artisan
+    if [ ! -f "artisan" ]; then
+        echo "❌ No artisan found. Is this a Laravel project?"
+        return 1
+    fi
+    
+    # Check if server already running
+    if lsof -i :$port > /dev/null 2>&1; then
+        echo "⚠️  Port $port already in use"
+        echo "   App might already be running at http://127.0.0.1:$port"
+    else
+        echo "🌐 Starting Laravel server..."
+        php artisan serve --port=$port > /tmp/laravel-$port.log 2>&1 &
+        sleep 2
+        if lsof -i :$port > /dev/null 2>&1; then
+            echo "✅ Laravel server running on port $port"
+        else
+            echo "❌ Laravel server failed to start"
+            echo "   Check: tail /tmp/laravel-$port.log"
+        fi
+    fi
+    
+    # Check/start Vite
+    if [ -f "package.json" ]; then
+        if ! lsof -i :5173 > /dev/null 2>&1; then
+            echo "⚡ Starting Vite..."
+            if grep -q "vite" package.json 2>/dev/null; then
+                LARAVEL_BYPASS_ENV_CHECK=1 npm run dev > /tmp/vite.log 2>&1 &
+                sleep 3
+                if lsof -i :5173 > /dev/null 2>&1; then
+                    echo "✅ Vite HMR running"
+                else
+                    echo "⚠️  Vite may need npm install"
+                fi
+            fi
+        else
+            echo "✅ Vite already running"
+        fi
+    fi
+    
+    echo ""
+    echo "📍 URLs:"
+    echo "   App:       http://127.0.0.1:$port"
+    echo "   Telescope: http://127.0.0.1:$port/telescope (if installed)"
+    echo ""
+    echo "📋 Commands:"
+    echo "   View logs: tail -f storage/logs/laravel.log"
+    echo "   Watch:     php artisan pail --timeout=0"
+    echo "   Stop:      pkill -f \"php artisan serve\""
+    echo ""
+    
+    # Open browser
+    sleep 1
+    open "http://127.0.0.1:$port"
+}
+
+# Stop all Laravel/Vite processes
+laravel-stop() {
+    echo "🛑 Stopping all Laravel services..."
+    pkill -f "php artisan serve" 2>/dev/null
+    pkill -f "vite" 2>/dev/null
+    pkill -f "npm run dev" 2>/dev/null
+    sleep 1
+    echo "✅ All services stopped"
+}
+
+# Check status of Laravel services
+laravel-status() {
+    echo "🔍 Laravel Service Status"
+    echo "=========================="
+    
+    # Check for running Laravel servers
+    local laravel_pids=$(pgrep -f "php artisan serve" | wc -l)
+    if [ "$laravel_pids" -gt 0 ]; then
+        echo "✅ Laravel servers: $laravel_pids running"
+        pgrep -f "php artisan serve" | while read pid; do
+            local port=$(lsof -P -a -p $pid -i 2>/dev/null | grep TCP | head -1 | grep -o ':[0-9]*' | tr -d ':' | head -1)
+            echo "   PID $pid on port ${port:-unknown}"
+        done
+    else
+        echo "❌ No Laravel servers running"
+    fi
+    
+    # Check Vite
+    if pgrep -f "vite" > /dev/null; then
+        echo "✅ Vite HMR: running"
+    else
+        echo "❌ Vite HMR: not running"
+    fi
+    
+    echo ""
+    echo "📊 Quick Check:"
+    curl -s http://127.0.0.1:8000 > /dev/null 2>&1 && echo "   Port 8000: ✅ Responding" || echo "   Port 8000: ❌ No response"
+}
+
+# Quick aliases
+alias lstart='laravel-start'
+alias lstop='laravel-stop'
+alias lstatus='laravel-status'
+alias lv='php artisan serve'
+alias lvite='npm run dev'
+alias lpail='php artisan pail --timeout=0'
+alias ltinker='php artisan tinker'
+alias lmigrate='php artisan migrate'
+alias llogs='tail -f storage/logs/laravel.log'
+
+
+# ============================================
+# Ghostty Integration
+# ============================================
+if [ -n "${GHOSTTY_RESOURCES_DIR}" ]; then
+    builtin source "${GHOSTTY_RESOURCES_DIR}/shell-integration/zsh/ghostty-integration"
+fi
+
+if [ -f "$HOME/.ghostty-theme-integration.zsh" ]; then
+    source "$HOME/.ghostty-theme-integration.zsh"
+fi
+
+# ============================================
+# Directory Aliases
+# ============================================
+alias main-projects="cd /Users/jcbbge"
+alias web="cd /Users/jcbbge/webdevelopment"
+alias next="cd /Users/jcbbge/webdevelopment/nextjs"
+alias solid="cd /Users/jcbbge/webdevelopment/solidjs"
+
+# ============================================
+# Editor Aliases (wrapper scripts handle bookmarks)
+# ============================================
+alias code='code-wrapper'
+alias edit-claude="code-wrapper '/Users/jcbbge/Library/Application Support/Claude/claude_desktop_config.json'"
+alias zsh-config="code-wrapper ~/.zshrc"
+
+# ============================================
+# OpenCode Aliases & Functions
+# ============================================
+alias occonfig='code-wrapper ~/.config/opencode/opencode.json'
+
+opencode() {
+    if [[ "$1" == "--build" ]]; then
+        shift
+        echo "Building opencode from source..."
+        (cd ~/opencode/packages/opencode && bun run build -- --single && \
+         cp ~/opencode/packages/opencode/dist/opencode-darwin-arm64/bin/opencode ~/.opencode/bin/opencode && \
+         xattr -r -d com.apple.quarantine ~/.opencode/bin/opencode 2>/dev/null; \
+         codesign --sign - --force ~/.opencode/bin/opencode) && \
+        echo "Build complete: $(~/.opencode/bin/opencode --version)" || \
+        { echo "Build failed."; return 1; }
+        [[ $# -eq 0 ]] && return
+
+    elif [[ "$1" == "--sync" ]]; then
+        shift
+        echo "🔄 Syncing opencode with upstream..."
+        
+        # Check for local changes
+        local had_changes=0
+        if ! git -C ~/opencode diff --quiet HEAD 2>/dev/null; then
+            had_changes=1
+            echo "📦 Stashing local changes..."
+            git -C ~/opencode stash push -m "auto-sync-$(date +%Y%m%d-%H%M%S)" || { echo "Stash failed."; return 1; }
+        fi
+        
+        echo "📥 Fetching upstream..."
+        git -C ~/opencode fetch upstream || { 
+            echo "Fetch failed."
+            [[ $had_changes -eq 1 ]] && git -C ~/opencode stash pop
+            return 1 
+        }
+        
+        # Check if we're behind
+        local behind=$(git -C ~/opencode rev-list --count HEAD..upstream/dev 2>/dev/null)
+        if [[ "$behind" == "0" ]]; then
+            echo "✅ Already up to date with upstream/dev"
+            [[ $had_changes -eq 1 ]] && echo "📦 Restoring stashed changes..." && git -C ~/opencode stash pop
+            return 0
+        fi
+        
+        echo "🔄 Merging upstream/dev ($behind commits ahead)..."
+        if ! git -C ~/opencode merge upstream/dev --no-edit; then
+            echo "❌ Merge failed. Resolve conflicts in ~/opencode, then run: opencode --build"
+            echo "   If stuck: git merge --abort && opencode --sync"
+            return 1
+        fi
+        
+        [[ $had_changes -eq 1 ]] && echo "📦 Restoring stashed changes..." && git -C ~/opencode stash pop
+        
+        echo "🔨 Building..."
+        opencode --build || return 1
+        
+        echo "📤 Pushing to fork..."
+        git -C ~/opencode push origin $(git -C ~/opencode branch --show-current) || { echo "Push failed."; return 1; }
+        
+        echo "✅ Sync complete: $(~/.opencode/bin/opencode --version)"
+        [[ $# -eq 0 ]] && return
+
+    elif [[ "$1" == "--update" || "$1" == "--u" ]]; then
+        shift
+        echo "⚠️  --update is deprecated. Use --sync instead."
+        opencode --sync "$@"
+        return
+
+    elif [[ "$1" == "--dev" ]]; then
+        shift
+        echo "Running opencode from source (dev mode)..."
+        (cd ~/opencode/packages/opencode && bun run --conditions=browser ./src/index.ts "$@")
+        return
+
+    elif [[ "$1" == "--models" ]]; then
+        shift
+        echo "Refreshing model whitelist..."
+        node ~/OpenRouter/openrouter.js --export
+        return
+    fi
+
+    # Auto-refresh model whitelist if categories file is older than 24h
+    local cat_file="$HOME/.config/opencode/openrouter-categories.json"
+    if [[ -f "$cat_file" ]]; then
+        local age=$(( $(date +%s) - $(stat -f %m "$cat_file") ))
+        if (( age > 86400 )); then
+            echo "Model whitelist is stale ($(( age / 3600 ))h old), refreshing..."
+            node ~/OpenRouter/openrouter.js --export 2>/dev/null &
+        fi
+    fi
+
+    OPENCODE_DISABLE_AUTOUPDATE=1 ~/.opencode/bin/opencode "$@"
+}
+
+# ============================================
+# Aider Functions
+# ============================================
+aider-start() {
+    if [[ -n "$VIRTUAL_ENV" ]]; then
+        echo "Deactivating current virtual environment..."
+        deactivate
+    fi
+
+    if [[ ! -d "venv" ]]; then
+        echo "Creating new virtual environment..."
+        python -m venv venv
+    fi
+
+    echo "Activating virtual environment..."
+    source venv/bin/activate
+
+    echo "Upgrading pip..."
+    pip install --upgrade pip
+
+    if ! pip show aider-chat &> /dev/null; then
+        echo "Installing aider..."
+        pip install aider-chat
+    else
+        echo "Upgrading aider..."
+        pip install --upgrade aider-chat
+    fi
+
+    echo "Starting aider..."
+    aider
+}
+
+aider-stop() {
+    if pgrep -f "aider" > /dev/null; then
+        echo "Stopping aider..."
+        pkill -f "aider"
+        echo "Aider has been stopped."
+    else
+        echo "No running aider process found."
+    fi
+
+    if [[ -n "$VIRTUAL_ENV" ]]; then
+        echo "Deactivating virtual environment..."
+        deactivate
+    fi
+}
+
+deactivate-all() {
+    if [[ -n "$VIRTUAL_ENV" ]]; then
+        echo "Deactivating virtual environment..."
+        deactivate
+    else
+        echo "No active virtual environment found."
+    fi
+}
+
+# ============================================
+# Claude Code
+# ============================================
+alias claude='claude --dangerously-skip-permissions'
+
+# ============================================
+# Helper Aliases
+# ============================================
+alias check-env="brew doctor"
+alias openrouter="node ~/OpenRouter/openrouter.js"
+alias ecr='aws ecr get-login-password --region us-east-2 | docker login --username AWS --password-stdin 918760427934.dkr.ecr.us-east-2.amazonaws.com'
+alias omp='omp --allow-home'
+
+# ============================================
+# Project Scaffolding
+# ============================================
+create-project() {
+    if [ $# -lt 2 ]; then
+        echo "Usage: create-project <type> <n>"
+        echo "Types: next, solid"
+        return 1
+    fi
+
+    local type=$1
+    local name=$2
+
+    case "$type" in
+        "next")
+            cd /Users/jcbbge/webdevelopment/nextjs && \
+            create-next-project "$name" && \
+            cd "$name"
+            ;;
+        "solid")
+            cd /Users/jcbbge/webdevelopment/solidjs && \
+            create-solid-project "$name" && \
+            cd "$name"
+            ;;
+        *)
+            echo "Unknown project type. Use: next or solid"
+            return 1
+            ;;
+    esac
+}
+
+# ============================================
+# Git Agent Attribution (Auto-detect AI model)
+# ============================================
+git() {
+    if [[ "$1" == "commit" ]]; then
+        local agent=$(~/.config/git-agents/detect-agent.sh)
+
+        if [ "$agent" != "me" ]; then
+            local profiles_file=~/.config/git-agents/profiles.json
+            if [ -f "$profiles_file" ]; then
+                local profile=$(cat "$profiles_file" | bun -e 'const p = JSON.parse(require("fs").readFileSync(0, "utf-8")); const a = p.profiles["'"$agent"'"]; if (a) { console.log(a.name + "|" + a.email); }')
+
+                if [ -n "$profile" ]; then
+                    local name="${profile%|*}"
+                    local email="${profile#*|}"
+
+                    env GIT_AUTHOR_NAME="$name" \
+                        GIT_AUTHOR_EMAIL="$email" \
+                        GIT_COMMITTER_NAME="$name" \
+                        GIT_COMMITTER_EMAIL="$email" \
+                        command git "$@"
+                    return $?
+                fi
+            fi
+        fi
+    fi
+
+    command git "$@"
+}
+
+# ============================================
+# Bookmark Navigation (overrides for tab completion)
+# ============================================
+cd() {
+    if [ $# -eq 1 ]; then
+        case "$1" in
+            -|~*|/*|.*)
+                builtin cd "$@"
+                return
+                ;;
+        esac
+
+        local project_path
+        project_path=$(command grep "^$1=" ~/.project-bookmarks 2>/dev/null | cut -d'=' -f2-)
+
+        if [ -n "$project_path" ]; then
+            if [ ! -d "$project_path" ]; then
+                echo "⚠️  Warning: Bookmarked path no longer exists: $project_path"
+                echo "Run 'bookmark validate' to check all bookmarks"
+                return 1
+            fi
+            builtin cd "$project_path"
+            return
+        fi
+    fi
+
+    builtin cd "$@"
+}
+
+# ============================================
+# Zsh Prompt (Pure Zsh - no external dependencies)
+# ============================================
+autoload -Uz vcs_info
+precmd() { vcs_info }
+
+zstyle ':vcs_info:git:*' formats '%F{green}  %b%f'
+zstyle ':vcs_info:git:*' actionformats '%F{green}  %b%f %F{yellow}(%a)%f'
+zstyle ':vcs_info:*' enable git
+zstyle ':vcs_info:git:*' check-for-changes true
+zstyle ':vcs_info:git:*' stagedstr '%F{yellow}+%f'
+zstyle ':vcs_info:git:*' unstagedstr '%F{red}*%f'
+zstyle ':vcs_info:git:*' formats '%F{green}  %b%f%c%u'
+
+setopt PROMPT_SUBST
+
+PROMPT='%F{blue}%3~%f ${vcs_info_msg_0_}
+%(?.%F{green}.%F{red})>%f '
+
+# ============================================
+# Tab Completions
+# ============================================
+BOOKMARKS_FILE="$HOME/.project-bookmarks"
+
+_get_bookmarks() {
+    if [ -f "$BOOKMARKS_FILE" ]; then
+        cut -d'=' -f1 "$BOOKMARKS_FILE"
+    fi
+}
+
+_bookmark_completion() {
+    local -a subcmds
+    subcmds=('list:list all bookmarks' 'ls:list all bookmarks' 'rm:remove a bookmark' 'edit:edit bookmarks file' 'validate:check if paths exist' 'help:show help')
+
+    if (( CURRENT == 2 )); then
+        _alternative \
+            'commands:subcommands:_describe "bookmark commands" subcmds' \
+            'bookmarks:bookmarks:compadd $(_get_bookmarks)'
+    elif (( CURRENT == 3 )) && [[ "${words[2]}" == "rm" ]]; then
+        _values 'bookmarks' $(_get_bookmarks)
+    fi
+}
+
+compdef _bookmark_completion bookmark
+
+_project_completion() {
+    local -a projects
+    projects=($(_get_bookmarks))
+    _arguments '*:project:compadd -a projects'
+}
+
+compdef _project_completion code
+compdef _project_completion zed
+
+_bookmark_cd_completion() {
+    if (( CURRENT == 2 )); then
+        local -a projects
+        projects=($(_get_bookmarks))
+        compadd -a projects
+        return
+    fi
+    _cd
+}
+
+compdef _bookmark_cd_completion cd
+
+# ============================================
+# Dev Brain: auto-capture terminal commands to SurrealDB thought_stream
+# ============================================
+function _surreal_preexec() {
+  local cmd="$1"
+  [[ "$cmd" =~ ^(ls|cd|clear|pwd|surreal|history|cat|echo|man|which|type|grep|find) ]] && return
+  local proj
+  proj=$(git rev-parse --show-toplevel 2>/dev/null || echo "global")
+  local escaped_cmd
+  escaped_cmd=$(printf '%s' "$cmd" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))' 2>/dev/null || printf '"%s"' "$cmd")
+  local horizon
+  horizon=$(date -u -v+4H '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -d '+4 hours' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)
+  curl -s -X POST \
+    'http://127.0.0.1:8000/key/thought_stream' \
+    -H 'Content-Type: application/json' \
+    -H 'surreal-ns: dev' \
+    -H 'surreal-db: brain' \
+    -u 'root:root' \
+    -d "{\"type\":\"shell_command\",\"content\":$escaped_cmd,\"project\":\"$proj\",\"tool\":\"zsh\",\"tags\":[],\"frequency\":\"transient\",\"frequency_hz\":1000.0,\"valid_horizon\":\"$horizon\",\"lifecycle_state\":\"active\",\"phase\":0.0}" \
+    &>/dev/null & disown
+}
+autoload -Uz add-zsh-hook
+add-zsh-hook preexec _surreal_preexec
+
+# Anima synthesis provider - set in ~/.zshrc.local or export manually
+export SYNTHESIS_PROVIDER=groq
+export SYNTHESIS_MODEL=llama-3.1-8b-instant
+export GRADER_PROVIDER=groq
+export GRADER_MODEL=llama-3.3-70b-versatile
+# export GROQ_API_KEY=<your_key_here>
+# export OPENROUTER_API_KEY=<your_key_here>

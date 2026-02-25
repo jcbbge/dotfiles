@@ -1,0 +1,4 @@
+#!/bin/bash
+# Simple wrapper - runs the actual installer
+cd "$(dirname "$0")"
+./dotter/install "$@"

@@ -1,0 +1,23 @@
+# Core packages - always installed
+tap "homebrew/bundle"
+
+# Shell
+brew "zsh"
+brew "zsh-completions"
+
+# Essentials
+brew "git"
+brew "curl"
+brew "wget"
+
+# Modern alternatives
+brew "eza"        # ls replacement
+brew "bat"        # cat replacement
+brew "fzf"        # fuzzy finder
+brew "ripgrep"    # grep replacement
+brew "fd"         # find replacement
+brew "jq"         # JSON processor
+
+# Dev tools
+brew "gh"         # GitHub CLI
+cask "ghostty"    # Terminal (adjust if you prefer something else)

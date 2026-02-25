@@ -1,0 +1,4 @@
+#!/bin/bash
+# Simple wrapper - runs status check
+cd "$(dirname "$0")"
+./dotter/status "$@"

@@ -1,0 +1,9 @@
+# Personal profile packages
+tap "homebrew/bundle"
+
+# Personal dev tools
+cask "cursor"     # Editor - swap with "visual-studio-code" if preferred
+
+# Productivity
+brew "neovim"
+brew "tmux"

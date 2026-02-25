@@ -1,0 +1,33 @@
+#!/bin/bash
+# Auto-detect and set git author based on AI agent/model
+
+# Detect which agent/model is being used
+AGENT=$(~/.config/git-agents/detect-agent.sh)
+
+# Load profile
+PROFILES_FILE=~/.config/git-agents/profiles.json
+
+if [ ! -f "$PROFILES_FILE" ]; then
+  # No profiles file, skip
+  exit 0
+fi
+
+# Extract profile using bun/node (whichever is available)
+if command -v bun &> /dev/null; then
+  PROFILE=$(bun -e "const p = require('$PROFILES_FILE'); const a = p.profiles['$AGENT']; if (a) { console.log(JSON.stringify(a)); }")
+elif command -v node &> /dev/null; then
+  PROFILE=$(node -e "const p = require('$PROFILES_FILE'); const a = p.profiles['$AGENT']; if (a) { console.log(JSON.stringify(a)); }")
+else
+  # Fallback: just use detected agent name
+  exit 0
+fi
+
+if [ -n "$PROFILE" ]; then
+  NAME=$(echo "$PROFILE" | bun -e "const p = JSON.parse(require('fs').readFileSync(0, 'utf-8')); console.log(p.name);")
+  EMAIL=$(echo "$PROFILE" | bun -e "const p = JSON.parse(require('fs').readFileSync(0, 'utf-8')); console.log(p.email);")
+  
+  export GIT_AUTHOR_NAME="$NAME"
+  export GIT_AUTHOR_EMAIL="$EMAIL"
+  export GIT_COMMITTER_NAME="$NAME"
+  export GIT_COMMITTER_EMAIL="$EMAIL"
+fi
