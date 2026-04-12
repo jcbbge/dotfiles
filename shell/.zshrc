@@ -48,6 +48,26 @@ alias openrouter="node ~/OpenRouter/openrouter.js"
 alias ecr='aws ecr get-login-password --region us-east-2 | docker login --username AWS --password-stdin 918760427934.dkr.ecr.us-east-2.amazonaws.com'
 
 # ============================================
+# Modern CLI Replacements
+# ============================================
+# These replace built-in commands with better versions
+# (only active if the tools are installed via brew)
+command -v eza >/dev/null && alias ls='eza --icons --group-directories-first'
+command -v eza >/dev/null && alias ll='eza -la --icons --group-directories-first --git'
+command -v eza >/dev/null && alias lt='eza --tree --icons --level=2'
+command -v bat >/dev/null && alias cat='bat --paging=never'
+command -v fd >/dev/null && alias find='fd'
+command -v rg >/dev/null && alias grep='rg'
+
+# fzf — fuzzy finder (Ctrl+T files, Ctrl+R history, Alt+C dirs)
+if command -v fzf >/dev/null; then
+    eval "$(fzf --zsh)"
+    export FZF_DEFAULT_COMMAND='fd --type f --hidden --follow --exclude .git'
+    export FZF_CTRL_T_COMMAND="$FZF_DEFAULT_COMMAND"
+    export FZF_DEFAULT_OPTS='--height 40% --layout=reverse --border'
+fi
+
+# ============================================
 # Project Scaffolding
 # ============================================
 create-project() {

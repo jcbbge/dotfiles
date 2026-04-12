@@ -1,42 +1,55 @@
-# Core package management
+# ── Core CLI Tools ──────────────────────────
 brew "bash"
 brew "bat"
 brew "coreutils"
 brew "curl"
-brew "deno"
 brew "doctl"
-brew "elixir"
-brew "erlang"
 brew "fd"
 brew "ffmpeg"
 brew "fzf"
 brew "gh"
 brew "git"
-brew "git-filter-repo"
 brew "git-secrets"
-brew "gleam"
-brew "go"
 brew "jq"
-brew "llvm@20"
 brew "mkcert"
-brew "node"
 brew "ollama"
-brew "python"
 brew "ripgrep"
-brew "rustup"
 brew "sqlite"
 brew "wget"
 brew "eza"
 
-# Container / k8s tooling (provided by OrbStack too)
-brew "kubectl"
+# ── Runtimes ────────────────────────────────
+brew "bun"
+brew "deno"
+brew "go"
+brew "node"
+brew "python"
+brew "rustup"
 
-# GUI apps / casks
+# ── Dev Tools ───────────────────────────────
+
+# ── GUI: Development ────────────────────────
+cask "ghostty"
+cask "visual-studio-code"
+cask "zed"
+
+# ── GUI: Browsers ───────────────────────────
+cask "google-chrome"
+
+# ── GUI: Productivity ───────────────────────
+cask "rectangle"
+cask "spotify"
+cask "cleanshot"
+
+# ── GUI: Communication ──────────────────────
+cask "discord"
+cask "slack"
+cask "whatsapp"
+cask "zoom"
+
+# ── GUI: Utilities ──────────────────────────
 cask "db-browser-for-sqlite"
 cask "font-monaspace"
-cask "hstracker"
-cask "leader-key"
 cask "mitmproxy"
-cask "ngrok"
 cask "only-switch"
 cask "orbstack"
