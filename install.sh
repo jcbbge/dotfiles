@@ -103,9 +103,13 @@ cp "$ROOT_DIR/harnesses/pi/extensions/"*.ts "$HOME/.pi/agent/extensions/"
 cp "$ROOT_DIR/harnesses/pi/extensions/perplexity/index.ts" "$HOME/.pi/agent/extensions/perplexity/index.ts"
 cp "$ROOT_DIR/harnesses/pi/extensions/perplexity/package.json" "$HOME/.pi/agent/extensions/perplexity/package.json"
 
+log "Linking AI stack scripts"
+chmod +x "$ROOT_DIR/scripts/tts.sh" "$ROOT_DIR/scripts/stt.sh" 2>/dev/null || true
+link_file "$ROOT_DIR/scripts/tts.sh" "$HOME/.local/bin/tts"
+link_file "$ROOT_DIR/scripts/stt.sh" "$HOME/.local/bin/stt"
+
 log "Done"
 cat <<'EOF'
-
 Next manual steps:
 1) Fill placeholders in:
    - shell/.zshrc
