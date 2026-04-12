@@ -26,10 +26,10 @@ fi
 # ============================================
 # Directory Aliases
 # ============================================
-alias main-projects="cd /Users/jcbbge"
-alias web="cd /Users/jcbbge/webdevelopment"
-alias next="cd /Users/jcbbge/webdevelopment/nextjs"
-alias solid="cd /Users/jcbbge/webdevelopment/solidjs"
+alias main-projects="cd $HOME"
+alias web="cd $HOME/webdevelopment"
+alias next="cd $HOME/webdevelopment/nextjs"
+alias solid="cd $HOME/webdevelopment/solidjs"
 
 # ============================================
 # Editor Aliases (wrapper scripts handle bookmarks)
@@ -44,8 +44,11 @@ alias zsh-config="/Applications/Visual\ Studio\ Code.app/Contents/Resources/app/
 # Helper Aliases
 # ============================================
 alias check-env="brew doctor"
-alias openrouter="node ~/OpenRouter/openrouter.js"
-alias ecr='aws ecr get-login-password --region us-east-2 | docker login --username AWS --password-stdin 918760427934.dkr.ecr.us-east-2.amazonaws.com'
+# Machine-specific aliases (M1 only)
+if [[ $(hostname) == *'jcbbge'* ]]; then
+  alias ecr='aws ecr get-login-password --region us-east-2 | docker login --username AWS --password-stdin 918760427934.dkr.ecr.us-east-2.amazonaws.com'
+  alias openrouter='node $HOME/OpenRouter/openrouter.js'
+fi
 
 # ============================================
 # Modern CLI Replacements
@@ -82,12 +85,12 @@ create-project() {
 
     case "$type" in
         "next")
-            cd /Users/jcbbge/webdevelopment/nextjs && \
+            cd $HOME/webdevelopment/nextjs && \
             create-next-project "$name" && \
             cd "$name"
             ;;
         "solid")
-            cd /Users/jcbbge/webdevelopment/solidjs && \
+            cd $HOME/webdevelopment/solidjs && \
             create-solid-project "$name" && \
             cd "$name"
             ;;

@@ -10,7 +10,7 @@ import { spawnSync } from "child_process";
  * rtk binary: ~/.local/bin/rtk (v0.34.3+)
  */
 
-const RTK_BIN = "/Users/jcbbge/.local/bin/rtk";
+const RTK_BIN = "$HOME/.local/bin/rtk";
 
 function rtkAvailable(): boolean {
   const result = spawnSync(RTK_BIN, ["--version"], { stdio: "ignore" });

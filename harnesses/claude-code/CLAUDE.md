@@ -137,7 +137,7 @@ Transport: **stdio** — executor binary launched as local process.
   "mcpServers": {
     "executor": {
       "command": "executor",
-      "args": ["mcp", "--scope", "/Users/jcbbge/.executor"]
+      "args": ["mcp", "--scope", "$HOME/.executor"]
     }
   }
 }
