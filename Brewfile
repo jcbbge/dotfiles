@@ -19,7 +19,6 @@ brew "wget"
 brew "eza"
 
 # ── Runtimes ────────────────────────────────
-brew "bun"
 brew "deno"
 brew "go"
 brew "node"

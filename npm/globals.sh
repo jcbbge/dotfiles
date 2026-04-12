@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+echo "==> Installing Bun"
+curl -fsSL https://bun.sh/install | bash
+
 # Global npm packages
 npm install -g \
   @anthropic-ai/claude-code@2.1.98 \
