@@ -1,0 +1,23 @@
+# Dev Services Registry
+# Format: NAME|TYPE|PORT|START_CMD|STOP_CMD|HEALTH_CHECK
+#
+# TYPE:
+#   launchd   - managed by launchctl (uses START_CMD as plist label)
+#   process   - managed by start/stop commands directly
+#   ollama    - special: ollama serve
+#
+# HEALTH_CHECK: a command that exits 0 if healthy, non-zero if not
+#   use "port" to just check if the port is listening
+#   use "none" if no check possible
+
+SurrealDB|launchd|6000|com.surrealdb.server|com.surrealdb.server|port
+Ollama|launchd|11434|com.ollama.server|com.ollama.server|port
+
+# ── Web Dev (ephemeral — start manually, tracked for visibility) ──────────────
+# These are not auto-started. `dev` surfaces them if they're running.
+Arc|ephemeral|3000|none|none|port
+
+# ── MCP Servers (7000–7099) ───────────────────────────────────────────────────
+# Add rows here as you wire up MCP servers
+# Example:
+# MyMCP|launchd|7000|com.example.mcp|com.example.mcp|port

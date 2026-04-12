@@ -1,0 +1,342 @@
+#!/usr/bin/env zsh
+# dev — unified developer portal
+setopt NO_XTRACE NO_VERBOSE 2>/dev/null || true
+# Usage:
+#   dev              interactive TUI dashboard (q quit, r refresh, u up, d down)
+#   dev up           boot all persistent services and print status
+#   dev down         stop all persistent services
+#   dev status       print status table and exit (no TUI)
+#   dev start <n>    start a service by name
+#   dev stop <n>     stop a service by name
+#   dev restart <n>  restart a service by name
+
+SERVICES_FILE="${0:A:h}/dev.services"
+REFRESH_INTERVAL=5
+
+# ── ANSI ─────────────────────────────────────────────────────────────────────
+R='\033[0m'
+BOLD='\033[1m'
+DIM='\033[2m'
+GRN='\033[32m'
+RED='\033[31m'
+YLW='\033[33m'
+CYN='\033[36m'
+WHT='\033[97m'
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+_hr() { printf '%*s' "${2:-$(tput cols)}" '' | tr ' ' "${1:--}"; }
+
+_port_live() { lsof -iTCP:"$1" -sTCP:LISTEN -P 2>/dev/null | grep -q LISTEN; }
+
+_pid_on_port() { lsof -ti TCP:"$1" -sTCP:LISTEN 2>/dev/null | head -1; }
+
+_mem_mb() {
+    [[ -z "$1" ]] && printf '-' && return
+    ps -o rss= -p "$1" 2>/dev/null | awk '{printf "%.0fMB", $1/1024}' || printf '-'
+}
+
+_cpu_pct() {
+    [[ -z "$1" ]] && printf '-' && return
+    ps -o %cpu= -p "$1" 2>/dev/null | awk '{printf "%.1f%%", $1}' || printf '-'
+}
+
+_elapsed() {
+    [[ -z "$1" ]] && printf '-' && return
+    ps -o etime= -p "$1" 2>/dev/null | tr -d ' ' || printf '-'
+}
+
+_load_services() {
+    grep -v '^\s*#' "$SERVICES_FILE" | grep -v '^\s*$'
+}
+
+_registered_ports() {
+    _load_services | cut -d'|' -f3 | grep -v none | sort -n
+}
+
+# ── Service status → prints "STATE PID MEM CPU UPTIME" (space separated) ─────
+_svc_info() {
+    local name="$1" type="$2" port="$3" start="$4"
+    local state=DOWN pid='' mem='-' cpu='-' uptime='-'
+
+    case "$type" in
+        launchd)
+            local row
+            row=$(launchctl list 2>/dev/null | awk -v l="$start" '$3==l {print $1,$2}' | head -1)
+            local lpid="${row%% *}" lstatus="${row##* }"
+            if [[ -n "$lpid" && "$lpid" =~ ^[0-9]+$ ]]; then
+                state=UP; pid="$lpid"
+            elif [[ -n "$row" && "$lstatus" =~ ^-?[0-9]+$ && "$lstatus" != "0" ]]; then
+                state=CRASHED; pid="$lpid"
+            fi
+            ;;
+        ephemeral|process)
+            if [[ "$port" != "none" ]] && _port_live "$port"; then
+                pid=$(_pid_on_port "$port"); state=UP
+            fi
+            ;;
+    esac
+
+    # Port health cross-check
+    if [[ "$port" != "none" && "$state" == "UP" ]]; then
+        _port_live "$port" || state=CRASHED
+    fi
+
+    if [[ -n "$pid" && "$pid" =~ ^[0-9]+$ ]]; then
+        mem=$(_mem_mb "$pid")
+        cpu=$(_cpu_pct "$pid")
+        uptime=$(_elapsed "$pid")
+    fi
+
+    printf '%s\t%s\t%s\t%s\t%s' "$state" "${pid:--}" "$mem" "$cpu" "$uptime"
+}
+
+# ── System ────────────────────────────────────────────────────────────────────
+_ram() {
+    vm_stat 2>/dev/null | awk '
+        /Pages active/     { act=$3+0 }
+        /Pages wired down/ { wir=$4+0 }
+        END {
+            used = (act + wir) * 16384 / 1073741824
+            printf "%.0fGB used", used
+        }'
+    sysctl -n hw.memsize 2>/dev/null | awk '{printf " / %.0fGB total", $1/1073741824}'
+}
+
+_disk() {
+    df -h / 2>/dev/null | awk 'NR==2 {print $3 " used / " $2 " (" $5 " full)"}'
+}
+
+_load() {
+    uptime 2>/dev/null | awk -F'load averages:' '{gsub(/^ /,"",$2); print $2}'
+}
+
+_all_ports() {
+    lsof -iTCP -sTCP:LISTEN -P 2>/dev/null \
+        | awk 'NR>1 {split($9,a,":"); print a[length(a)], $1, $2}' \
+        | grep -v 'ARDAgent\|rapportd\|ControlCe' \
+        | sort -n
+}
+
+# ── Badges ────────────────────────────────────────────────────────────────────
+_badge() {
+    case "$1" in
+        UP)      printf "${GRN}● UP     ${R}" ;;
+        DOWN)    printf "${DIM}○ DOWN   ${R}" ;;
+        CRASHED) printf "${RED}✖ CRASHED${R}" ;;
+        *)       printf "${DIM}? -------${R}" ;;
+    esac
+}
+
+# ── Render panels ─────────────────────────────────────────────────────────────
+_panel_services() {
+    local cols; cols=$(tput cols 2>/dev/null || printf 100)
+    printf "${BOLD}${CYN}  SERVICES${R}\n"
+    printf "${DIM}  %s${R}\n" "$(_hr - $((cols-4)))"
+    printf "${BOLD}${DIM}  %-14s %-10s %-6s %-8s %-7s %-9s %-10s${R}\n" \
+        NAME STATE PORT PID MEM CPU UPTIME
+    printf "${DIM}  %s${R}\n" "$(_hr - $((cols-4)))"
+
+    while IFS='|' read -r nm tp po st sp hl; do
+        local info=$(_svc_info "$nm" "$tp" "$po" "$st")
+        local sv_state=$(printf '%s' "$info" | cut -f1)
+        local sv_pid=$(printf '%s' "$info" | cut -f2)
+        local sv_mem=$(printf '%s' "$info" | cut -f3)
+        local sv_cpu=$(printf '%s' "$info" | cut -f4)
+        local sv_up=$(printf '%s' "$info" | cut -f5)
+        local pd="$po"; [[ "$po" == "none" ]] && pd='-'
+        printf '  %-14s ' "$nm"
+        _badge "$sv_state"
+        printf ' %-6s %-8s %-7s %-9s %-10s\n' "$pd" "$sv_pid" "$sv_mem" "$sv_cpu" "$sv_up"
+    done < <(_load_services)
+    printf '\n'
+}
+
+_panel_ports() {
+    local cols; cols=$(tput cols 2>/dev/null || printf 100)
+    printf "${BOLD}${CYN}  PORTS${R}\n"
+    printf "${DIM}  %s${R}\n" "$(_hr - $((cols-4)))"
+    printf "${BOLD}${DIM}  %-6s %-20s %-8s %s${R}\n" PORT PROCESS PID NOTE
+    printf "${DIM}  %s${R}\n" "$(_hr - $((cols-4)))"
+
+    local reg; reg=$(_registered_ports)
+
+    while read -r portnum proc pid_val; do
+        if printf '%s\n' "$reg" | grep -qx "$portnum"; then
+            printf "  ${WHT}%-6s${R} %-20s %-8s ${DIM}registered${R}\n" \
+                "$portnum" "${proc:0:20}" "$pid_val"
+        else
+            printf "  ${YLW}%-6s${R} %-20s %-8s ${YLW}⚠ orphan${R}\n" \
+                "$portnum" "${proc:0:20}" "$pid_val"
+        fi
+    done < <(_all_ports)
+    printf '\n'
+}
+
+_panel_system() {
+    local cols; cols=$(tput cols 2>/dev/null || printf 100)
+    printf "${BOLD}${CYN}  SYSTEM${R}\n"
+    printf "${DIM}  %s${R}\n" "$(_hr - $((cols-4)))"
+    printf "  ${DIM}RAM   ${R}${WHT}%s${R}\n" "$(_ram)"
+    printf "  ${DIM}Disk  ${R}${WHT}%s${R}\n" "$(_disk)"
+    printf "  ${DIM}Load  ${R}${WHT}%s${R}\n" "$(_load)"
+    printf '\n'
+}
+
+_panel_procs() {
+    local cols; cols=$(tput cols 2>/dev/null || printf 100)
+    printf "${BOLD}${CYN}  TOP PROCESSES${R}\n"
+    printf "${DIM}  %s${R}\n" "$(_hr - $((cols-4)))"
+    printf "${BOLD}${DIM}  %-8s %-7s %-7s %s${R}\n" PID '%MEM' '%CPU' COMMAND
+    printf "${DIM}  %s${R}\n" "$(_hr - $((cols-4)))"
+    ps aux 2>/dev/null | sort -rk4 | awk 'NR>1 && NR<=9 {
+        cmd=$11; sub(/.*\//,"",cmd)
+        printf "  %-8s %-7s %-7s %s\n", $2, $4"%", $3"%", cmd
+    }'
+    printf '\n'
+}
+
+_render_all() {
+    local cols; cols=$(tput cols 2>/dev/null || printf 100)
+    local ts; ts=$(date '+%Y-%m-%d %H:%M:%S')
+    clear
+    printf "${BOLD}${WHT}  ▸ dev portal${R}"
+    printf "${DIM}  %s   [q]quit [r]refresh [u]up [d]down${R}\n" "$ts"
+    printf "${DIM}%s${R}\n\n" "$(_hr '─' "$cols")"
+    _panel_services
+    _panel_ports
+    _panel_system
+    _panel_procs
+    printf "${DIM}  refresh: ${REFRESH_INTERVAL}s  ·  registry: %s${R}\n" "$SERVICES_FILE"
+}
+
+# ── Service control ───────────────────────────────────────────────────────────
+_get_svc_row() {
+    grep -i "^${1}|" "$SERVICES_FILE" 2>/dev/null | head -1
+}
+
+_start_svc() {
+    local row; row=$(_get_svc_row "$1")
+    [[ -z "$row" ]] && printf 'Unknown service: %s\n' "$1" && return 1
+    local nm tp po st
+    IFS='|' read -r nm tp po st _ _ <<< "$row"
+    case "$tp" in
+        launchd)
+            launchctl load -w ~/Library/LaunchAgents/${st}.plist 2>/dev/null \
+                || launchctl start "$st" 2>/dev/null || true ;;
+        process) eval "$st" & ;;
+        ephemeral) printf '%s is ephemeral — start it in your project dir.\n' "$nm" ;;
+    esac
+}
+
+_stop_svc() {
+    local row; row=$(_get_svc_row "$1")
+    [[ -z "$row" ]] && printf 'Unknown service: %s\n' "$1" && return 1
+    local nm tp po st sp
+    IFS='|' read -r nm tp po st sp _ <<< "$row"
+    case "$tp" in
+        launchd)  launchctl stop "$sp" 2>/dev/null || true ;;
+        process)  eval "$sp" 2>/dev/null || true ;;
+        ephemeral) printf '%s is ephemeral — stop it in its terminal.\n' "$nm" ;;
+    esac
+}
+
+_restart_svc() { _stop_svc "$1"; sleep 1; _start_svc "$1"; }
+
+# ── dev up ────────────────────────────────────────────────────────────────────
+_cmd_up() {
+    printf '\n${BOLD}  dev up — starting all persistent services${R}\n\n'
+    while IFS='|' read -r nm tp po st sp hl; do
+        [[ "$tp" == "ephemeral" ]] && continue
+        local info=$(_svc_info "$nm" "$tp" "$po" "$st")
+        local sv_state=$(printf '%s' "$info" | cut -f1)
+        if [[ "$sv_state" == "UP" ]]; then
+            printf "  ${GRN}●${R} %-14s already up\n" "$nm"
+        else
+            printf "  ${YLW}↑${R} %-14s starting...\n" "$nm"
+            case "$tp" in
+                launchd)
+                    launchctl load -w ~/Library/LaunchAgents/${st}.plist 2>/dev/null \
+                        || launchctl start "$st" 2>/dev/null || true ;;
+                process) eval "$st" &>/dev/null & ;;
+            esac
+            sleep 2
+            info=$(_svc_info "$nm" "$tp" "$po" "$st")
+            sv_state=$(printf '%s' "$info" | cut -f1)
+            if [[ "$sv_state" == "UP" ]]; then
+                printf "\033[1A\033[2K  ${GRN}●${R} %-14s up\n" "$nm"
+            else
+                printf "\033[1A\033[2K  ${RED}✖${R} %-14s FAILED\n" "$nm"
+            fi
+        fi
+    done < <(_load_services)
+    printf "\n${DIM}  Run 'dev' for full dashboard.${R}\n\n"
+}
+
+# ── dev down ──────────────────────────────────────────────────────────────────
+_cmd_down() {
+    printf '\n${BOLD}  dev down — stopping all persistent services${R}\n\n'
+    while IFS='|' read -r nm tp po st sp hl; do
+        [[ "$tp" == "ephemeral" ]] && continue
+        printf "  ${YLW}↓${R} %-14s\n" "$nm"
+        case "$tp" in
+            launchd) launchctl stop "$sp" 2>/dev/null || true ;;
+            process) eval "$sp" 2>/dev/null || true ;;
+        esac
+    done < <(_load_services)
+    printf '\n'
+}
+
+# ── dev status (non-interactive) ──────────────────────────────────────────────
+_cmd_status() {
+    printf "\n${BOLD}  dev status — %s${R}\n\n" "$(date '+%Y-%m-%d %H:%M:%S')"
+    _panel_services
+    _panel_ports
+    _panel_system
+}
+
+# ── Interactive TUI ───────────────────────────────────────────────────────────
+_tui() {
+    local old_stty; old_stty=$(stty -g 2>/dev/null || true)
+    trap "stty '$old_stty' 2>/dev/null; tput cnorm 2>/dev/null; clear; exit 0" INT TERM EXIT
+    tput civis 2>/dev/null || true
+    stty -echo -icanon min 0 time 0 2>/dev/null || true
+
+    local last=0
+    while true; do
+        local now; now=$(date +%s)
+        (( now - last >= REFRESH_INTERVAL )) && { _render_all; last=$now; }
+
+        local key=''
+        IFS= read -r -t 0.2 -k 1 key 2>/dev/null || true
+        case "$key" in
+            q|Q) break ;;
+            r|R) last=0 ;;
+            u|U)
+                stty "$old_stty" 2>/dev/null; tput cnorm; clear
+                _cmd_up
+                stty -echo -icanon min 0 time 0 2>/dev/null; tput civis
+                last=0 ;;
+            d|D)
+                stty "$old_stty" 2>/dev/null; tput cnorm; clear
+                _cmd_down; sleep 1
+                stty -echo -icanon min 0 time 0 2>/dev/null; tput civis
+                last=0 ;;
+        esac
+    done
+
+    stty "$old_stty" 2>/dev/null || true
+    tput cnorm 2>/dev/null || true
+    clear
+}
+
+# ── Entry ─────────────────────────────────────────────────────────────────────
+case "${1:-}" in
+    up)      _cmd_up ;;
+    down)    _cmd_down ;;
+    status)  _cmd_status ;;
+    start)   [[ -z "${2:-}" ]] && printf 'Usage: dev start <name>\n' && exit 1; _start_svc "$2" ;;
+    stop)    [[ -z "${2:-}" ]] && printf 'Usage: dev stop <name>\n' && exit 1; _stop_svc "$2" ;;
+    restart) [[ -z "${2:-}" ]] && printf 'Usage: dev restart <name>\n' && exit 1; _restart_svc "$2" ;;
+    '')      _tui ;;
+    *)       printf 'Usage: dev [up|down|status|start <n>|stop <n>|restart <n>]\n       dev  (no args) → live TUI\n' ;;
+esac
