@@ -250,3 +250,44 @@ pi-update() {
     echo "Done."
 }
 export RTK_TELEMETRY_DISABLED=1
+
+# ============================================
+# Port Management
+# ============================================
+# Registry: ~/dotfiles/PORTS.md
+port() {
+    case "${1:-list}" in
+        list)
+            echo "Listening ports (non-Apple):"
+            lsof -iTCP -sTCP:LISTEN -P 2>/dev/null \
+                | awk 'NR>1 {print $9, $1, $3}' \
+                | grep -v 'com.apple\|ARDAgent\|ControlCe\|rapportd' \
+                | sort -t: -k2 -n \
+                | awk '{split($1,a,":"); printf "  %-6s %s (%s)\n", a[length(a)], $2, $3}'
+            ;;
+        check)
+            if [[ -z "$2" ]]; then echo "Usage: port check <number>"; return 1; fi
+            local result
+            result=$(lsof -iTCP:$2 -sTCP:LISTEN -P 2>/dev/null | awk 'NR>1 {print $1, $3, $9}')
+            if [[ -z "$result" ]]; then
+                echo "$2 is free"
+            else
+                echo "$2 is in use: $result"
+            fi
+            ;;
+        kill)
+            if [[ -z "$2" ]]; then echo "Usage: port kill <number>"; return 1; fi
+            local pid
+            pid=$(lsof -ti TCP:$2 -sTCP:LISTEN 2>/dev/null)
+            if [[ -z "$pid" ]]; then
+                echo "Nothing on port $2"
+            else
+                echo "Killing PID $pid on port $2"
+                kill -9 $pid
+            fi
+            ;;
+        *)
+            echo "Usage: port [list|check <n>|kill <n>]"
+            ;;
+    esac
+}
