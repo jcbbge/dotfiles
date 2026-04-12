@@ -1,0 +1,35 @@
+{
+    "mcpServers": {
+        "executor": {
+            "command": "executor",
+            "args": ["mcp", "--scope", "{{HOME}}/.executor"]
+        },
+        "shopify-dev-mcp": {
+            "command": "npx",
+            "args": [
+                "-y",
+                "@shopify/dev-mcp@latest"
+            ]
+        },
+        "shopify": {
+            "command": "npx",
+            "args": [
+                "-y",
+                "shopify-mcp-server"
+            ],
+            "env": {
+                "SHOPIFY_ACCESS_TOKEN": "{{SHOPIFY_ACCESS_TOKEN}}",
+                "MYSHOPIFY_DOMAIN": "{{MYSHOPIFY_DOMAIN}}"
+            }
+        }
+    },
+    "preferences": {
+        "menuBarEnabled": false,
+        "quickEntryDictationShortcut": "off",
+        "coworkScheduledTasksEnabled": true,
+        "ccdScheduledTasksEnabled": true,
+        "sidebarMode": "code",
+        "coworkWebSearchEnabled": false,
+        "launchPreviewPersistSession": true
+    }
+}

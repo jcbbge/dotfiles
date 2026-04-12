@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Experimental configs - never commit
 taxonomy/experiment/
 taxonomy/experimental/
@@ -9,3 +10,30 @@ taxonomy/experimental/
 # Temporary files
 *.tmp
 *.temp
+=======
+# Never commit secrets
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.sample
+
+# SSH keys - never
+**/id_rsa
+**/id_ed25519
+**/id_ecdsa
+**/*.pem
+**/*.key
+
+# AWS credentials - never
+**/.aws/credentials
+
+# OS
+.DS_Store
+**/.DS_Store
+
+# Node
+node_modules/
+
+# Sensitive shell history
+.zsh_history
+>>>>>>> 37f2d0b (init: full macOS dev environment setup)
