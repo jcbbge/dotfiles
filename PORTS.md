@@ -34,7 +34,8 @@ When you add a new service, add it here first.
 
 | Port  | Server       | How it starts | Notes |
 |-------|--------------|---------------|-------|
-| —     | (none yet)   | —             | add here as you wire them up |
+| 7010  | executor    | `executor web --port 7010` | MCP gateway, also serves web UI |
+| —     | (reserved)  | —             | add here as you wire them up |
 
 ---
 

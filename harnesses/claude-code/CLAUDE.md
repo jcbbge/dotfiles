@@ -126,7 +126,7 @@ MICRO = single task/feature. MACRO = epic/phase. MICROs roll up to a MACRO via `
 
 ## MCP Servers
 
-All harnesses connect to ONE gateway: the executor at `http://127.0.0.1:8788/mcp`.
+All harnesses connect to ONE gateway: the executor at `http://127.0.0.1:4788/mcp`.
 Brain-layer services are internal infrastructure — never called directly by harnesses.
 
 ### Claude Desktop
@@ -147,19 +147,19 @@ Transport: **stdio** — executor binary launched as local process.
 Config: `~/.claude.json` (user scope)
 Transport: **HTTP**
 ```bash
-claude mcp add --transport http --scope user executor http://localhost:8788/mcp
+claude mcp add --transport http --scope user executor http://localhost:4788/mcp
 ```
 
 ### opencode
 Config: `~/.config/opencode/opencode.json`
 Transport: **remote HTTP**
 ```json
-{ "mcp": { "executor": { "type": "remote", "url": "http://localhost:8788/mcp" } } }
+{ "mcp": { "executor": { "type": "remote", "url": "http://localhost:4788/mcp" } } }
 ```
 
 ### pi.dev
 No native MCP — uses executor extension at `~/.pi/agent/extensions/executor.ts`.
-Registers `execute` and `resume` tools pointing to `http://127.0.0.1:8788/mcp`.
+Registers `execute` and `resume` tools pointing to `http://127.0.0.1:4788/mcp`.
 
 ### Brain-layer services (internal only)
 | Service | Port | Access |
