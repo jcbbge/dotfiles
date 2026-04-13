@@ -212,6 +212,68 @@ Event sales platform for Infinity Hospitality. Replaces Bento.
 
 ---
 
+## Composto — Code-to-IR Compression
+
+Binary: `/opt/homebrew/bin/composto` · Install: `npm install -g composto-ai`
+
+Composto converts source files into a compressed Intermediate Representation (IR) optimized for LLM consumption. **89% fewer tokens** with equivalent structural understanding. Supported languages: TypeScript, JavaScript, Python, Go, Rust.
+
+### When to use it
+
+- **Before reading a large file** — run `composto ir <file> L0` to decide if you need raw source
+- **Exploring an unfamiliar codebase** — `composto context src/ --budget 4000` instead of cat-ing files
+- **Building context for a task** — scan a package boundary without blowing your context window
+- **Dependency mapping** — understand module shapes before modifying them
+
+### When NOT to use it
+
+- When you need **exact string literals or comments** (IR strips them) — use L3 or raw Read
+- When you need to **make edits** — always work from raw source (L3)
+- When the file is small enough to read directly (< ~100 lines)
+
+### IR Layer Guide
+
+| Layer | What you get | Token cost | When to use |
+|-------|-------------|------------|-------------|
+| **L0** | Structure only — exports, function signatures, type names | ~10 tokens | Quick triage: is this the file I need? |
+| **L1** | Full IR — signatures + inferred types + call graph | ~85 tokens | Understanding a module before modifying it |
+| **L2** | Git delta — only what changed vs HEAD | minimal | Reviewing a diff in context |
+| **L3** | Raw source | full | Editing, searching literals, reading comments |
+
+### Key Commands
+
+```bash
+# Triage a file before reading it
+composto ir apps/api/src/routes/quotes.ts L0
+
+# Understand a module fully (before modifying)
+composto ir packages/db/src/schema/quotes.ts L1
+
+# Build context for a task — stays within a token budget
+composto context apps/api/src/ --budget 4000
+composto context packages/db/src/ --budget 2000
+
+# Scan a whole directory for structural summary
+composto scan ~/Infinity/arc/apps/api/src/
+
+# Benchmark token savings on a path
+composto benchmark ~/Infinity/arc/apps/web/src/
+```
+
+### Repo-specific usage
+
+**Arc** (`~/Infinity/arc/`) — TypeScript monorepo. Use before touching any route or schema file:
+```bash
+composto context ~/Infinity/arc/packages/db/src/ --budget 2000   # schema overview
+composto ir ~/Infinity/arc/apps/api/src/routes/quotes.ts L1       # route shape
+```
+
+**Constellation** (`~/constellation-zg/`) — Zig project. Composto does **not** support Zig; use KotaDB oracle for stdlib lookups.
+
+**Flux** (`~/flux/`) — Swift/macOS. Composto does **not** support Swift; read files directly.
+
+---
+
 ## Key Paths
 
 | Thing | Path |
