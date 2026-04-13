@@ -104,9 +104,18 @@ cp "$ROOT_DIR/harnesses/pi/extensions/perplexity/index.ts" "$HOME/.pi/agent/exte
 cp "$ROOT_DIR/harnesses/pi/extensions/perplexity/package.json" "$HOME/.pi/agent/extensions/perplexity/package.json"
 
 log "Linking AI stack scripts"
-chmod +x "$ROOT_DIR/scripts/tts.sh" "$ROOT_DIR/scripts/stt.sh" 2>/dev/null || true
+chmod +x "$ROOT_DIR/scripts/dev" "$ROOT_DIR/scripts/tts.sh" "$ROOT_DIR/scripts/stt.sh" 2>/dev/null || true
+link_file "$ROOT_DIR/scripts/dev" "$HOME/.local/bin/dev"
 link_file "$ROOT_DIR/scripts/tts.sh" "$HOME/.local/bin/tts"
 link_file "$ROOT_DIR/scripts/stt.sh" "$HOME/.local/bin/stt"
+
+log "Installing LaunchAgents"
+mkdir -p "$HOME/Library/LaunchAgents"
+for plist in "$ROOT_DIR"/launchagents/*.plist; do
+  [ -e "$plist" ] || continue
+  cp "$plist" "$HOME/Library/LaunchAgents/"
+  launchctl load -w "$HOME/Library/LaunchAgents/$(basename "$plist")" 2>/dev/null || true
+done
 
 log "Done"
 cat <<'EOF'
