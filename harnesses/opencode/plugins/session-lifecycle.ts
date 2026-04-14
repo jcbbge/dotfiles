@@ -11,10 +11,10 @@
 import type { Plugin, PluginInput } from "@opencode-ai/plugin";
 import type { Event } from "@opencode-ai/sdk";
 
-const EXECUTOR_URL = "http://127.0.0.1:8788/mcp";
+const KOTADB_URL = "http://127.0.0.1:8788/mcp";
 
 async function executorCall(code: string): Promise<unknown> {
-  const initRes = await fetch(EXECUTOR_URL, {
+  const initRes = await fetch(KOTADB_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json", "Accept": "application/json, text/event-stream" },
     body: JSON.stringify({
@@ -27,7 +27,7 @@ async function executorCall(code: string): Promise<unknown> {
   const mcpSessionId = initRes.headers.get("mcp-session-id");
   if (!mcpSessionId) throw new Error("Executor did not return mcp-session-id");
 
-  const res = await fetch(EXECUTOR_URL, {
+  const res = await fetch(KOTADB_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

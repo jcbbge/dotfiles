@@ -1,9 +1,5 @@
 {
     "mcpServers": {
-        "executor": {
-            "command": "executor",
-            "args": ["mcp", "--scope", "{{HOME}}/.executor"]
-        },
         "shopify-dev-mcp": {
             "command": "npx",
             "args": [

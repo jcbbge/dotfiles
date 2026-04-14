@@ -197,6 +197,15 @@ export function streamPerplexity(
 	(async () => {
 		try {
 			const apiKey = options?.apiKey;
+
+			const isPlaceholder = apiKey?.startsWith("{{") && apiKey?.endsWith("}}");
+			if (isPlaceholder) {
+				throw new Error(
+					"PERPLEXITY_API_KEY is a template placeholder '{{PERPLEXITY_API_KEY}}'. " +
+					"Replace it with your actual key from https://www.perplexity.ai/settings/api"
+				);
+			}
+
 			if (!apiKey) throw new Error("No Perplexity API key. Set PERPLEXITY_API_KEY.");
 
 			const modelWithBaseUrl = { ...model, baseUrl: PERPLEXITY_BASE_URL };

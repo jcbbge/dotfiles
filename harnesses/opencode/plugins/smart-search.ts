@@ -6,7 +6,7 @@
  *   Layer 2 (kotadb)   — deps, node_modules, structural, impact analysis.
  *   Layer 3 (ripgrep)  — exact regex, verification, fallback.
  *
- * kotadb is routed through executor MCP gateway at :8788/mcp.
+ * kotadb is routed through kotadb directly at :3000/mcp.
  */
 
 import type { Plugin } from "@opencode-ai/plugin";
@@ -14,16 +14,16 @@ import { tool } from "@opencode-ai/plugin";
 import { z } from "zod";
 import { spawnSync } from "child_process";
 
-const EXECUTOR_MCP_URL = "http://127.0.0.1:8788/mcp";
+const EXECUTOR_MCP_URL = "http://127.0.0.1:3000/mcp";
 
-// Health cache — avoids 1.5s timeout on every call when executor is down
+// Health cache — avoids 1.5s timeout on every call when kotadb is down
 let _kotadbHealthy: boolean | null = null;
 let _kotadbHealthCheckedAt = 0;
 const HEALTH_TTL_MS = 30_000;
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-async function executorInitializeSession(): Promise<string> {
+async function kotadbInitializeSession(): Promise<string> {
   const initRes = await fetch(EXECUTOR_MCP_URL, {
     method: "POST",
     headers: {
@@ -54,7 +54,7 @@ async function kotadbHealth(): Promise<boolean> {
     return _kotadbHealthy;
   }
   try {
-    await executorInitializeSession();
+    await kotadbInitializeSession();
     _kotadbHealthy = true;
   } catch {
     _kotadbHealthy = false;
@@ -64,7 +64,7 @@ async function kotadbHealth(): Promise<boolean> {
 }
 
 async function kotadbSearch(query: string, limit: number): Promise<string> {
-  const sessionId = await executorInitializeSession();
+  const sessionId = await kotadbInitializeSession();
 
   const code = [
     "const result = await tools[\"kotadb.search\"]({",
@@ -210,7 +210,7 @@ const plugin: Plugin = async (_input) => {
               const out = await kotadbSearch(query, limit).catch(() => "");
               if (out) sections.push(`## kotadb (structural / dependency)\n\n${out}`);
             } else {
-              sections.push(`## kotadb\n\n⚠️ executor/kotadb not reachable at 127.0.0.1:8788/mcp`);
+              sections.push(`## kotadb\n\n⚠️ executor/kotadb not reachable at 127.0.0.1:3000/mcp`);
             }
           }
 

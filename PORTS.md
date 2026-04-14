@@ -30,12 +30,12 @@ When you add a new service, add it here first.
 
 ---
 
-## MCP Servers (7000–7099)
+## Active Services
 
-| Port  | Server       | How it starts | Notes |
-|-------|--------------|---------------|-------|
-| 7010  | executor    | `executor web --port 7010` | MCP gateway, also serves web UI |
-| —     | (reserved)  | —             | add here as you wire them up |
+| Port | Service | How it starts | Notes |
+|------|---------|--------------|-------|
+| 6000 | SurrealDB | launchd | persistent |
+| 11434 | Ollama | launchd | local AI |
 
 ---
 

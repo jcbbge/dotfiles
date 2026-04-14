@@ -124,58 +124,6 @@ MICRO = single task/feature. MACRO = epic/phase. MICROs roll up to a MACRO via `
 
 ---
 
-## MCP Servers
-
-All harnesses connect to ONE gateway: the executor at `http://127.0.0.1:4788/mcp`.
-Brain-layer services are internal infrastructure — never called directly by harnesses.
-
-### Claude Desktop
-Config: `~/Library/Application Support/Claude/claude_desktop_config.json`
-Transport: **stdio** — executor binary launched as local process.
-```json
-{
-  "mcpServers": {
-    "executor": {
-      "command": "executor",
-      "args": ["mcp", "--scope", "$HOME/.executor"]
-    }
-  }
-}
-```
-
-### Claude Code CLI
-Config: `~/.claude.json` (user scope)
-Transport: **HTTP**
-```bash
-claude mcp add --transport http --scope user executor http://localhost:4788/mcp
-```
-
-### opencode
-Config: `~/.config/opencode/opencode.json`
-Transport: **remote HTTP**
-```json
-{ "mcp": { "executor": { "type": "remote", "url": "http://localhost:4788/mcp" } } }
-```
-
-### pi.dev
-No native MCP — uses executor extension at `~/.pi/agent/extensions/executor.ts`.
-Registers `execute` and `resume` tools pointing to `http://127.0.0.1:4788/mcp`.
-
-### Brain-layer services (internal only)
-| Service | Port | Access |
-|---------|------|--------|
-| Anima | 3098 | via executor only |
-| Dev-Brain | 3097 | via executor only |
-| KotaDB | 3099 | via executor only |
-| Substrate | 8011 | via executor only |
-| Subagent | 3096 | via executor only |
-| SurrealDB | 8002 | internal to brain stack |
-
-**If a service is down**, restart via launchctl:
-```bash
-launchctl load ~/Library/LaunchAgents/<plist-name>.plist
-```
-Plist names: `com.jcbbge.anima-mcp.plist` · `com.jcbbge.dev-brain-mcp.plist` · `com.jcbbge.kotadb-app.plist` · `dev.substrate.mcp.plist` · `dev.brain.subagent-mcp.plist`
 ---
 
 ## Active Project: Arc
@@ -203,11 +151,38 @@ Event sales platform for Infinity Hospitality. Replaces Bento.
 
 ---
 
+## KotaDB — Code Intelligence MCP
+
+Local clone: `~/kotadb/` · DB: `~/.kotadb/kota.db` · Toolset: `full` (20 tools)
+
+**MCP config** (`~/.claude/mcp.json`):
+```json
+{
+  "mcpServers": {
+    "kotadb": {
+      "command": "/Users/jrg/.bun/bin/bun",
+      "args": ["run", "/Users/jrg/kotadb/app/src/cli.ts", "--stdio", "--toolset", "full"],
+      "env": { "KOTADB_PATH": "/Users/jrg/.kotadb/kota.db" }
+    }
+  }
+}
+```
+
+**Indexed repos:** `solidjs/solid` → `~/source/solid`
+
+**Key tools:** `index_repository`, `search`, `search_dependencies`, `find_usages`, `analyze_change_impact`, `generate_task_context`, `record_decision`, `record_insight`
+
+**Indexing a new repo:**
+```bash
+# stdio: index_repository { repository: "owner/repo", localPath: "/abs/path" }
+# Requires KOTADB_PATH set — fixed at ~/.kotadb/kota.db
+```
+
 ## Agent-Core Tooling
 
 | Tool | Repo |
 |------|------|
-| kotadb | `github.com/jcbbge/kotadb` |
+| kotadb | `~/kotadb/` (local clone of `github.com/jayminwest/kotadb`) |
 | agent-core (schema, skills, tools) | `github.com/jcbbge/agent-core` |
 
 ---
@@ -271,6 +246,8 @@ composto ir ~/Infinity/arc/apps/api/src/routes/quotes.ts L1       # route shape
 **Constellation** (`~/constellation-zg/`) — Zig project. Composto does **not** support Zig; use KotaDB oracle for stdlib lookups.
 
 **Flux** (`~/flux/`) — Swift/macOS. Composto does **not** support Swift; read files directly.
+
+---
 
 ---
 

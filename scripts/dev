@@ -1,342 +1,702 @@
 #!/usr/bin/env zsh
-# dev — unified developer portal
-setopt NO_XTRACE NO_VERBOSE 2>/dev/null || true
-# Usage:
-#   dev              interactive TUI dashboard (q quit, r refresh, u up, d down)
-#   dev up           boot all persistent services and print status
-#   dev down         stop all persistent services
-#   dev status       print status table and exit (no TUI)
-#   dev start <n>    start a service by name
-#   dev stop <n>     stop a service by name
-#   dev restart <n>  restart a service by name
+# dev — developer environment snapshot
+emulate -LR zsh
 
 SERVICES_FILE="${0:A:h}/dev.services"
-REFRESH_INTERVAL=5
 
-# ── ANSI ─────────────────────────────────────────────────────────────────────
-R='\033[0m'
-BOLD='\033[1m'
-DIM='\033[2m'
-GRN='\033[32m'
-RED='\033[31m'
-YLW='\033[33m'
-CYN='\033[36m'
-WHT='\033[97m'
+# ── ANSI ──────────────────────────────────────────────────────────────────────
+R='\033[0m'; BOLD='\033[1m'; DIM='\033[2m'
+GRN='\033[32m'; RED='\033[31m'; YLW='\033[33m'; CYN='\033[36m'; WHT='\033[97m'
 
-# ── Utilities ─────────────────────────────────────────────────────────────────
-_hr() { printf '%*s' "${2:-$(tput cols)}" '' | tr ' ' "${1:--}"; }
-
+# ── Helpers ───────────────────────────────────────────────────────────────────
+_hr()        { printf '%*s' "${1:-$(tput cols)}" '' | tr ' ' '─'; }
 _port_live() { lsof -iTCP:"$1" -sTCP:LISTEN -P 2>/dev/null | grep -q LISTEN; }
+_pid_on()    { lsof -ti TCP:"$1" -sTCP:LISTEN 2>/dev/null | head -1; }
+_mem_mb()    { ps -o rss= -p "$1" 2>/dev/null | awk '{printf "%.0fMB",$1/1024}'; }
+_uptime_s()  { ps -o etime= -p "$1" 2>/dev/null | tr -d ' '; }
 
-_pid_on_port() { lsof -ti TCP:"$1" -sTCP:LISTEN 2>/dev/null | head -1; }
-
-_mem_mb() {
-    [[ -z "$1" ]] && printf '-' && return
-    ps -o rss= -p "$1" 2>/dev/null | awk '{printf "%.0fMB", $1/1024}' || printf '-'
+_health_ms() {
+    # _health_ms <url> [timeout_secs]  →  "42ms" or "-"
+    local url="$1" timeout="${2:-0.5}"
+    local out=$(curl -s -o /dev/null -w '%{http_code} %{time_total}' \
+        --connect-timeout "$timeout" --max-time "$timeout" "$url" 2>/dev/null)
+    local code="${out%% *}" t="${out##* }"
+    [[ "$code" != "000" && -n "$code" ]] \
+        && printf '%s' "$t" | awk '{printf "%dms", $1*1000}' \
+        || printf '-'
 }
 
-_cpu_pct() {
-    [[ -z "$1" ]] && printf '-' && return
-    ps -o %cpu= -p "$1" 2>/dev/null | awk '{printf "%.1f%%", $1}' || printf '-'
-}
-
-_elapsed() {
-    [[ -z "$1" ]] && printf '-' && return
-    ps -o etime= -p "$1" 2>/dev/null | tr -d ' ' || printf '-'
-}
-
-_load_services() {
-    grep -v '^\s*#' "$SERVICES_FILE" | grep -v '^\s*$'
-}
-
-_registered_ports() {
-    _load_services | cut -d'|' -f3 | grep -v none | sort -n
-}
-
-# ── Service status → prints "STATE PID MEM CPU UPTIME" (space separated) ─────
-_svc_info() {
-    local name="$1" type="$2" port="$3" start="$4"
-    local state=DOWN pid='' mem='-' cpu='-' uptime='-'
-
-    case "$type" in
-        launchd)
-            local row
-            row=$(launchctl list 2>/dev/null | awk -v l="$start" '$3==l {print $1,$2}' | head -1)
-            local lpid="${row%% *}" lstatus="${row##* }"
-            if [[ -n "$lpid" && "$lpid" =~ ^[0-9]+$ ]]; then
-                state=UP; pid="$lpid"
-            elif [[ -n "$row" && "$lstatus" =~ ^-?[0-9]+$ && "$lstatus" != "0" ]]; then
-                state=CRASHED; pid="$lpid"
-            fi
-            ;;
-        ephemeral|process)
-            if [[ "$port" != "none" ]] && _port_live "$port"; then
-                pid=$(_pid_on_port "$port"); state=UP
-            fi
-            ;;
-    esac
-
-    # Port health cross-check
-    if [[ "$port" != "none" && "$state" == "UP" ]]; then
-        _port_live "$port" || state=CRASHED
-    fi
-
-    if [[ -n "$pid" && "$pid" =~ ^[0-9]+$ ]]; then
-        mem=$(_mem_mb "$pid")
-        cpu=$(_cpu_pct "$pid")
-        uptime=$(_elapsed "$pid")
-    fi
-
-    printf '%s\t%s\t%s\t%s\t%s' "$state" "${pid:--}" "$mem" "$cpu" "$uptime"
-}
-
-# ── System ────────────────────────────────────────────────────────────────────
-_ram() {
-    vm_stat 2>/dev/null | awk '
-        /Pages active/     { act=$3+0 }
-        /Pages wired down/ { wir=$4+0 }
-        END {
-            used = (act + wir) * 16384 / 1073741824
-            printf "%.0fGB used", used
-        }'
-    sysctl -n hw.memsize 2>/dev/null | awk '{printf " / %.0fGB total", $1/1073741824}'
-}
-
-_disk() {
-    df -h / 2>/dev/null | awk 'NR==2 {print $3 " used / " $2 " (" $5 " full)"}'
-}
-
-_load() {
-    uptime 2>/dev/null | awk -F'load averages:' '{gsub(/^ /,"",$2); print $2}'
-}
-
-_all_ports() {
-    lsof -iTCP -sTCP:LISTEN -P 2>/dev/null \
-        | awk 'NR>1 {split($9,a,":"); print a[length(a)], $1, $2}' \
-        | grep -v 'ARDAgent\|rapportd\|ControlCe' \
-        | sort -n
-}
-
-# ── Badges ────────────────────────────────────────────────────────────────────
 _badge() {
     case "$1" in
-        UP)      printf "${GRN}● UP     ${R}" ;;
-        DOWN)    printf "${DIM}○ DOWN   ${R}" ;;
-        CRASHED) printf "${RED}✖ CRASHED${R}" ;;
-        *)       printf "${DIM}? -------${R}" ;;
+        UP)      printf "${GRN}●${R} ${GRN}UP${R}     " ;;
+        DOWN)    printf "${DIM}○${R} ${DIM}DOWN${R}   " ;;
+        SCHED)   printf "${DIM}◷${R} ${DIM}SCHED${R}  " ;;
+        CRASHED) printf "${RED}✖${R} ${RED}CRASHED${R}" ;;
     esac
 }
 
-# ── Render panels ─────────────────────────────────────────────────────────────
-_panel_services() {
-    local cols; cols=$(tput cols 2>/dev/null || printf 100)
-    printf "${BOLD}${CYN}  SERVICES${R}\n"
-    printf "${DIM}  %s${R}\n" "$(_hr - $((cols-4)))"
-    printf "${BOLD}${DIM}  %-14s %-10s %-6s %-8s %-7s %-9s %-10s${R}\n" \
-        NAME STATE PORT PID MEM CPU UPTIME
-    printf "${DIM}  %s${R}\n" "$(_hr - $((cols-4)))"
+# ── SERVICES — auto-discover from LaunchAgents ────────────────────────────────
+_service_row() {
+    local plist="$1" pid_port_map="$2"
+    local label=$(basename "$plist" .plist)
+    [[ "$label" == com.google.* ]] && return
 
-    while IFS='|' read -r nm tp po st sp hl; do
-        local info=$(_svc_info "$nm" "$tp" "$po" "$st")
-        local sv_state=$(printf '%s' "$info" | cut -f1)
-        local sv_pid=$(printf '%s' "$info" | cut -f2)
-        local sv_mem=$(printf '%s' "$info" | cut -f3)
-        local sv_cpu=$(printf '%s' "$info" | cut -f4)
-        local sv_up=$(printf '%s' "$info" | cut -f5)
-        local pd="$po"; [[ "$po" == "none" ]] && pd='-'
-        printf '  %-14s ' "$nm"
-        _badge "$sv_state"
-        printf ' %-6s %-8s %-7s %-9s %-10s\n' "$pd" "$sv_pid" "$sv_mem" "$sv_cpu" "$sv_up"
-    done < <(_load_services)
-    printf '\n'
-}
+    local lrow=$(launchctl list 2>/dev/null | awk -v l="$label" '$3==l{print $1,$2}' | head -1)
+    local lpid="${lrow%% *}" lexit="${lrow##* }"
 
-_panel_ports() {
-    local cols; cols=$(tput cols 2>/dev/null || printf 100)
-    printf "${BOLD}${CYN}  PORTS${R}\n"
-    printf "${DIM}  %s${R}\n" "$(_hr - $((cols-4)))"
-    printf "${BOLD}${DIM}  %-6s %-20s %-8s %s${R}\n" PORT PROCESS PID NOTE
-    printf "${DIM}  %s${R}\n" "$(_hr - $((cols-4)))"
+    local state pid
+    if [[ -n "$lpid" && "$lpid" =~ ^[0-9]+$ ]]; then
+        state=UP; pid="$lpid"
+    elif [[ -n "$lrow" && "$lexit" == "0" ]]; then
+        state=SCHED; pid=""
+    elif [[ -n "$lrow" ]]; then
+        state=CRASHED; pid=""
+    else
+        state=DOWN; pid=""
+    fi
 
-    local reg; reg=$(_registered_ports)
-
-    while read -r portnum proc pid_val; do
-        if printf '%s\n' "$reg" | grep -qx "$portnum"; then
-            printf "  ${WHT}%-6s${R} %-20s %-8s ${DIM}registered${R}\n" \
-                "$portnum" "${proc:0:20}" "$pid_val"
-        else
-            printf "  ${YLW}%-6s${R} %-20s %-8s ${YLW}⚠ orphan${R}\n" \
-                "$portnum" "${proc:0:20}" "$pid_val"
+    local portstr='-' latency='-' mem='-' up='-'
+    if [[ -n "$pid" && "$pid" =~ ^[0-9]+$ ]]; then
+        local p=$(printf '%s' "$pid_port_map" | awk -v p="$pid" '$1==p{print $2;exit}')
+        if [[ -n "$p" ]]; then
+            portstr=":$p"
+            local hurl
+            case "$p" in
+                6000)  hurl="http://127.0.0.1:6000/health" ;;
+                11434) hurl="http://127.0.0.1:11434/" ;;
+                7010)  hurl="http://127.0.0.1:7010/" ;;
+                *)     hurl="http://127.0.0.1:$p/" ;;
+            esac
+            latency=$(_health_ms "$hurl" 0.3)
         fi
-    done < <(_all_ports)
+        mem=$(_mem_mb "$pid")
+        up=$(_uptime_s "$pid")
+    fi
+
+    local name="$label"
+    case "$label" in
+        com.surrealdb.server) name="SurrealDB" ;;
+        com.surrealdb.backup) name="SurrealDB backup" ;;
+        com.ollama.server)    name="Ollama" ;;
+    esac
+
+    printf '  %-22s ' "$name"
+    _badge "$state"
+    printf ' %-8s %-8s %-8s %s\n' "$portstr" "$latency" "$mem" "$up"
+}
+
+_panel_services() {
+    local cols=$(tput cols 2>/dev/null || printf 100)
+    printf "${BOLD}${CYN}  SERVICES${R}\n"
+    printf "${DIM}  %s${R}\n" "$(_hr $((cols-4)))"
+    printf "${DIM}  %-22s %-10s %-8s %-8s %-8s %s${R}\n" NAME STATUS PORT LATENCY MEM UPTIME
+    printf "${DIM}  %s${R}\n" "$(_hr $((cols-4)))"
+
+    local pid_port_map=$(lsof -iTCP -sTCP:LISTEN -P 2>/dev/null \
+        | awk 'NR>1{split($9,a,":");print $2, a[length(a)]}')
+
+    for plist in ~/Library/LaunchAgents/*.plist(N); do
+        _service_row "$plist" "$pid_port_map"
+    done
     printf '\n'
 }
 
+# ── PORTS — all active TCP listeners ─────────────────────────────────────────
+_panel_ports() {
+    local cols=$(tput cols 2>/dev/null || printf 100)
+    printf "${BOLD}${CYN}  PORTS${R}\n"
+    printf "${DIM}  %s${R}\n" "$(_hr $((cols-4)))"
+    printf "${DIM}  %-7s %-18s %-8s %s${R}\n" PORT PROCESS PID NOTE
+    printf "${DIM}  %s${R}\n" "$(_hr $((cols-4)))"
+
+    lsof -iTCP -sTCP:LISTEN -P 2>/dev/null \
+    | awk 'NR>1{split($9,a,":");print a[length(a)],$1,$2}' \
+    | sort -n \
+    | grep -v 'ARDAgent\|rapportd\|ControlCe\|mDNSResponder\|zed\|Zed' \
+    | while read -r port proc pid; do
+        local note=''
+        case "$port" in
+            6000)  note="SurrealDB" ;;
+            7010)  note="Executor (MCP gateway)" ;;
+            8011)  note="Substrate" ;;
+            11434) note="Ollama" ;;
+            3096)  note="Subagent" ;;
+            3097)  note="Dev-Brain" ;;
+            3098)  note="Anima" ;;
+            3099)  note="KotaDB" ;;
+        esac
+        if [[ -n "$note" ]]; then
+            printf "  ${WHT}%-7s${R} %-18s %-8s ${DIM}%s${R}\n" ":$port" "$proc" "$pid" "$note"
+        else
+            printf "  ${YLW}%-7s${R} %-18s %-8s\n" ":$port" "$proc" "$pid"
+        fi
+    done
+    printf '\n'
+}
+
+# ── MCP SERVERS + EXECUTOR DEPTH ──────────────────────────────────────────────
+_panel_mcp() {
+    local cols=$(tput cols 2>/dev/null || printf 100)
+    printf "${BOLD}${CYN}  MCP SERVERS${R}\n"
+    printf "${DIM}  %s${R}\n" "$(_hr $((cols-4)))"
+
+    local cfg=~/.claude.json
+    [[ ! -f "$cfg" ]] && printf "  ${DIM}no ~/.claude.json found${R}\n\n" && return
+
+    python3 - "$cfg" <<'PYEOF'
+import json, sys, re, socket, time, shutil
+import urllib.request, urllib.error
+
+with open(sys.argv[1]) as f:
+    d = json.load(f)
+
+servers = d.get('mcpServers', {})
+if not servers:
+    print("  \033[2mno MCP servers configured\033[0m")
+    sys.exit(0)
+
+BRAIN = {3096: 'Subagent', 3097: 'Dev-Brain', 3098: 'Anima', 3099: 'KotaDB', 8011: 'Substrate'}
+
+def sock_live(port):
+    try:
+        s = socket.create_connection(('127.0.0.1', int(port)), timeout=0.3)
+        s.close()
+        return True
+    except:
+        return False
+
+def http_ms(url, timeout=0.5):
+    try:
+        start = time.time()
+        urllib.request.urlopen(url, timeout=timeout)
+        return int((time.time() - start) * 1000)
+    except:
+        return None
+
+for name, cfg in servers.items():
+    t = cfg.get('type', cfg.get('transportType', '?'))
+    url = cfg.get('url', '')
+    port = None
+    if url:
+        m = re.search(r':(\d+)', url)
+        if m:
+            port = m.group(1)
+
+    if port:
+        ms = http_ms(f'http://127.0.0.1:{port}/', 0.5)
+        if ms is not None:
+            status = '\033[32m● UP\033[0m    '
+            lat = f'{ms}ms'
+        elif sock_live(int(port)):
+            status = '\033[32m● UP\033[0m    '
+            lat = '-'
+        else:
+            status = '\033[2m○ DOWN\033[0m  '
+            lat = '-'
+        print(f"  {status} \033[97m{name:<20}\033[0m :{port:<10} {lat}")
+
+    elif t == 'stdio':
+        cmd = cfg.get('command', '?')
+        if shutil.which(cmd):
+            status = '\033[32m● stdio\033[0m '
+        else:
+            status = '\033[31m✖ missing\033[0m'
+        print(f"  {status} \033[97m{name:<20}\033[0m {cmd}")
+
+        # executor: probe web port + brain stack
+        if name == 'executor' or cmd == 'executor':
+            ms = http_ms('http://127.0.0.1:7010/', 0.5)
+            if ms is not None:
+                print(f"  \033[2m  web  ↳\033[0m  :7010  {ms}ms")
+            else:
+                print(f"  \033[2m  web  ↳  :7010  DOWN\033[0m")
+
+            up_b  = [n for p, n in BRAIN.items() if sock_live(p)]
+            dn_b  = [n for p, n in BRAIN.items() if not sock_live(p)]
+            if up_b:
+                print(f"  \033[2m  brain ↳\033[0m  {' · '.join(up_b)}")
+            if dn_b:
+                print(f"  \033[2m  ○ down ↳  {' · '.join(dn_b)}\033[0m")
+    else:
+        print(f"  \033[2m?       \033[0m \033[97m{name:<20}\033[0m {url or '-'}")
+PYEOF
+    printf '\n'
+}
+
+# ── MODELS: OLLAMA ────────────────────────────────────────────────────────────
+_panel_ollama() {
+    local cols=$(tput cols 2>/dev/null || printf 100)
+    printf "${BOLD}${CYN}  MODELS${R}  ${DIM}ollama${R}\n"
+    printf "${DIM}  %s${R}\n" "$(_hr $((cols-4)))"
+
+    if ! command -v ollama &>/dev/null; then
+        printf "  ${DIM}ollama not found${R}\n\n"
+        return
+    fi
+
+    local loaded=$(ollama ps 2>/dev/null | tail -n +2)
+
+    ollama list 2>/dev/null | tail -n +2 | while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        local name=$(printf '%s' "$line" | awk '{print $1}')
+        local size=$(printf '%s' "$line" | awk '{print $3,$4}')
+        local age=$(printf '%s' "$line" | awk '{print $5,$6,$7}')
+        if printf '%s' "$loaded" | grep -q "^$name"; then
+            printf "  ${GRN}●${R} ${WHT}%-38s${R} ${GRN}loaded${R}   %-10s\n" "$name" "$size"
+        else
+            printf "  ${DIM}○${R} ${DIM}%-38s${R} ${DIM}idle${R}     %-10s  ${DIM}%s${R}\n" "$name" "$size" "$age"
+        fi
+    done
+    printf '\n'
+}
+
+# ── MODELS: WHISPER (Tuna STT) ────────────────────────────────────────────────
+_panel_whisper() {
+    local base=~/Library/Application\ Support/Tuna/models/whisper
+    [[ ! -d "$base" ]] && return
+
+    local cols=$(tput cols 2>/dev/null || printf 100)
+    printf "${BOLD}${CYN}  MODELS${R}  ${DIM}whisper · Tuna STT${R}\n"
+    printf "${DIM}  %s${R}\n" "$(_hr $((cols-4)))"
+
+    find "$base" -type f -name "*.bin" 2>/dev/null | while read -r f; do
+        local model=$(basename "$(dirname "$f")")
+        local size=$(du -sh "$f" 2>/dev/null | cut -f1)
+        printf "  ${DIM}◈${R}  ${WHT}%-20s${R}  %s\n" "$model" "$size"
+    done
+    printf '\n'
+}
+
+# ── MODELS: APPLE ─────────────────────────────────────────────────────────────
+_panel_apple() {
+    local cols=$(tput cols 2>/dev/null || printf 100)
+    local found=0
+
+    if [[ -d ~/Library/Containers/com.apple.WritingTools.WritingToolsAppIntentsExtension ]]; then
+        (( found == 0 )) && {
+            printf "${BOLD}${CYN}  MODELS${R}  ${DIM}Apple on-device${R}\n"
+            printf "${DIM}  %s${R}\n" "$(_hr $((cols-4)))"
+        }
+        found=1
+        printf "  ${DIM}◈${R}  ${WHT}Apple Intelligence${R}  ${DIM}Writing Tools · Summaries · Replies${R}\n"
+    fi
+
+    if [[ -d ~/Library/Containers/com.apple.CoreMotionFoundationModelExtension ]]; then
+        (( found == 0 )) && {
+            printf "${BOLD}${CYN}  MODELS${R}  ${DIM}Apple on-device${R}\n"
+            printf "${DIM}  %s${R}\n" "$(_hr $((cols-4)))"
+        }
+        found=1
+        printf "  ${DIM}◈${R}  ${WHT}Foundation Model${R}     ${DIM}CoreMotion on-device LLM${R}\n"
+    fi
+
+    local dictpath=$(find /Library/Application\ Support -maxdepth 3 \
+        -name "*.lm" -path "*SpeechRecognition*" 2>/dev/null | head -1)
+    if [[ -n "$dictpath" ]]; then
+        (( found == 0 )) && {
+            printf "${BOLD}${CYN}  MODELS${R}  ${DIM}Apple on-device${R}\n"
+            printf "${DIM}  %s${R}\n" "$(_hr $((cols-4)))"
+        }
+        found=1
+        printf "  ${DIM}◈${R}  ${WHT}Enhanced Dictation${R}   ${DIM}on-device speech recognition${R}\n"
+    fi
+
+    (( found )) && printf '\n'
+}
+
+# ── SYSTEM ────────────────────────────────────────────────────────────────────
 _panel_system() {
-    local cols; cols=$(tput cols 2>/dev/null || printf 100)
+    local cols=$(tput cols 2>/dev/null || printf 100)
+    local ram=$(vm_stat 2>/dev/null | awk '
+        /Pages active/{act=$3+0} /Pages wired down/{wir=$4+0}
+        END{printf "%.0fGB",( act+wir)*16384/1073741824}')
+    local total=$(sysctl -n hw.memsize 2>/dev/null | awk '{printf "%.0fGB",$1/1073741824}')
+    local disk=$(df -h / 2>/dev/null | awk 'NR==2{print $3"/"$2" ("$5")"}')
+    local load=$(uptime 2>/dev/null | awk -F'load averages:' '{gsub(/^ /,"",$2);print $2}')
+
     printf "${BOLD}${CYN}  SYSTEM${R}\n"
-    printf "${DIM}  %s${R}\n" "$(_hr - $((cols-4)))"
-    printf "  ${DIM}RAM   ${R}${WHT}%s${R}\n" "$(_ram)"
-    printf "  ${DIM}Disk  ${R}${WHT}%s${R}\n" "$(_disk)"
-    printf "  ${DIM}Load  ${R}${WHT}%s${R}\n" "$(_load)"
+    printf "${DIM}  %s${R}\n" "$(_hr $((cols-4)))"
+    printf "  ${DIM}RAM${R}  ${WHT}%s / %s${R}   ${DIM}Disk${R}  ${WHT}%s${R}   ${DIM}Load${R}  ${WHT}%s${R}\n" \
+        "$ram" "$total" "$disk" "$load"
     printf '\n'
 }
 
-_panel_procs() {
-    local cols; cols=$(tput cols 2>/dev/null || printf 100)
-    printf "${BOLD}${CYN}  TOP PROCESSES${R}\n"
-    printf "${DIM}  %s${R}\n" "$(_hr - $((cols-4)))"
-    printf "${BOLD}${DIM}  %-8s %-7s %-7s %s${R}\n" PID '%MEM' '%CPU' COMMAND
-    printf "${DIM}  %s${R}\n" "$(_hr - $((cols-4)))"
-    ps aux 2>/dev/null | sort -rk4 | awk 'NR>1 && NR<=9 {
-        cmd=$11; sub(/.*\//,"",cmd)
-        printf "  %-8s %-7s %-7s %s\n", $2, $4"%", $3"%", cmd
-    }'
-    printf '\n'
+# ── STATUS — parallel panels ──────────────────────────────────────────────────
+_status() {
+    printf "\n${BOLD}${WHT}  ▸ dev${R}  ${DIM}%s${R}\n\n" "$(date '+%Y-%m-%d %H:%M:%S')"
+    local t=$(mktemp -d)
+    _panel_services > "$t/1" & _panel_ports   > "$t/2" &
+    _panel_mcp      > "$t/3" & _panel_ollama  > "$t/4" &
+    _panel_whisper  > "$t/5" & _panel_apple   > "$t/6" &
+    _panel_system   > "$t/7" &
+    wait
+    cat "$t"/[1-7]
+    rm -rf "$t"
 }
 
-_render_all() {
-    local cols; cols=$(tput cols 2>/dev/null || printf 100)
-    local ts; ts=$(date '+%Y-%m-%d %H:%M:%S')
-    clear
-    printf "${BOLD}${WHT}  ▸ dev portal${R}"
-    printf "${DIM}  %s   [q]quit [r]refresh [u]up [d]down${R}\n" "$ts"
-    printf "${DIM}%s${R}\n\n" "$(_hr '─' "$cols")"
-    _panel_services
-    _panel_ports
-    _panel_system
-    _panel_procs
-    printf "${DIM}  refresh: ${REFRESH_INTERVAL}s  ·  registry: %s${R}\n" "$SERVICES_FILE"
+# ── WATCH ─────────────────────────────────────────────────────────────────────
+_watch() {
+    local interval="${1:-5}"
+    trap 'tput cnorm 2>/dev/null; printf "\n"; exit 0' INT TERM
+    tput civis 2>/dev/null
+    while true; do
+        tput clear 2>/dev/null || printf '\033[2J\033[H'
+        _status
+        printf "  ${DIM}↻ every ${interval}s  ·  ^C exit${R}\n"
+        sleep "$interval"
+    done
 }
 
-# ── Service control ───────────────────────────────────────────────────────────
-_get_svc_row() {
-    grep -i "^${1}|" "$SERVICES_FILE" 2>/dev/null | head -1
+# ── LOGS ──────────────────────────────────────────────────────────────────────
+_logs() {
+    local target="${1:l}"
+    [[ -z "$target" ]] && printf "${RED}  usage: dev logs <name>${R}\n" && return 1
+
+    local plist=''
+    for p in ~/Library/LaunchAgents/*.plist(N); do
+        local label=$(basename "$p" .plist)
+        local nick="${label:l}"
+        case "${label:l}" in
+            com.surrealdb.server) nick=surrealdb ;;
+            com.ollama.server)    nick=ollama ;;
+        esac
+        if [[ "$nick" == "$target" || "${label:l}" == "$target" ]]; then
+            plist="$p"; break
+        fi
+    done
+
+    if [[ -z "$plist" ]]; then
+        local row=$(grep -i "^${target}|" "$SERVICES_FILE" 2>/dev/null | head -1)
+        if [[ -n "$row" ]]; then
+            printf "  ${YLW}%s${R} is a process-type service — no plist log path\n" "$target"
+        else
+            printf "  ${RED}no service matching: %s${R}\n" "$target"
+            printf "  ${DIM}try: surrealdb · ollama · or a full label name${R}\n"
+        fi
+        return 1
+    fi
+
+    local paths=$(python3 - "$plist" <<'PYEOF'
+import plistlib, sys
+try:
+    with open(sys.argv[1], 'rb') as f:
+        d = plistlib.load(f)
+    print(d.get('StandardOutPath', ''))
+    print(d.get('StandardErrorPath', ''))
+except:
+    print(''); print('')
+PYEOF
+)
+    local stdout_log=$(printf '%s' "$paths" | head -1)
+    local stderr_log=$(printf '%s' "$paths" | tail -1)
+
+    local logfile=''
+    [[ -n "$stdout_log" && -f "$stdout_log" ]] && logfile="$stdout_log"
+    [[ -z "$logfile" && -n "$stderr_log" && -f "$stderr_log" ]] && logfile="$stderr_log"
+
+    if [[ -n "$logfile" ]]; then
+        printf "${BOLD}${CYN}  logs:${R} ${WHT}%s${R}  ${DIM}%s${R}\n\n" "$target" "$logfile"
+        tail -f "$logfile"
+    else
+        printf "  ${YLW}no log file configured in plist${R}\n"
+        printf "  ${DIM}%s${R}\n" "$plist"
+        [[ -n "$stdout_log" ]] && printf "  ${DIM}StandardOutPath: %s (not found)${R}\n" "$stdout_log"
+        [[ -n "$stderr_log" ]] && printf "  ${DIM}StandardErrorPath: %s (not found)${R}\n" "$stderr_log"
+    fi
 }
 
-_start_svc() {
-    local row; row=$(_get_svc_row "$1")
-    [[ -z "$row" ]] && printf 'Unknown service: %s\n' "$1" && return 1
+# ── JSON OUTPUT ───────────────────────────────────────────────────────────────
+_json_output() {
+    python3 - <<'PYEOF'
+import json, subprocess, os, socket, time, re, glob
+import urllib.request, urllib.error
+
+def sock_live(port):
+    try:
+        s = socket.create_connection(('127.0.0.1', int(port)), timeout=0.3)
+        s.close(); return True
+    except: return False
+
+def http_ms(url, timeout=0.5):
+    try:
+        start = time.time()
+        urllib.request.urlopen(url, timeout=timeout)
+        return int((time.time() - start) * 1000)
+    except: return None
+
+# PID→port map
+lsof_out = subprocess.run(['lsof','-iTCP','-sTCP:LISTEN','-P'],
+                          capture_output=True, text=True).stdout
+pid_port = {}
+for line in lsof_out.splitlines()[1:]:
+    parts = line.split()
+    if len(parts) >= 9:
+        m = re.search(r':(\d+)$', parts[8])
+        if m: pid_port[parts[1]] = m.group(1)
+
+lc_out = subprocess.run(['launchctl','list'], capture_output=True, text=True).stdout
+
+# Services
+NAME_MAP = {'com.surrealdb.server':'SurrealDB','com.ollama.server':'Ollama'}
+HEALTH_URL = {'6000':'http://127.0.0.1:6000/health','11434':'http://127.0.0.1:11434/','7010':'http://127.0.0.1:7010/'}
+services = []
+for pp in sorted(glob.glob(os.path.expanduser('~/Library/LaunchAgents/*.plist'))):
+    label = os.path.basename(pp).replace('.plist','')
+    if label.startswith('com.google.'): continue
+    state, pid = 'DOWN', None
+    for line in lc_out.splitlines():
+        parts = line.split()
+        if len(parts) >= 3 and parts[2] == label:
+            if re.match(r'^\d+$', parts[0]): state, pid = 'UP', parts[0]
+            elif parts[1] == '0': state = 'SCHED'
+            else: state = 'CRASHED'
+            break
+    port = pid_port.get(pid) if pid else None
+    mem = uptime = latency_ms = None
+    if pid:
+        r = subprocess.run(['ps','-o','rss=','-p',pid], capture_output=True, text=True)
+        if r.stdout.strip(): mem = f"{int(r.stdout.strip())//1024}MB"
+        r = subprocess.run(['ps','-o','etime=','-p',pid], capture_output=True, text=True)
+        uptime = r.stdout.strip()
+    if port:
+        latency_ms = http_ms(HEALTH_URL.get(port, f'http://127.0.0.1:{port}/'), 0.3)
+    services.append({'name':NAME_MAP.get(label,label),'label':label,'state':state,
+                     'pid':pid,'port':port,'mem':mem,'uptime':uptime,'latency_ms':latency_ms})
+
+# Ports
+NOTE = {'6000':'SurrealDB','7010':'Executor','8011':'Substrate','11434':'Ollama',
+        '3096':'Subagent','3097':'Dev-Brain','3098':'Anima','3099':'KotaDB'}
+SKIP = {'ARDAgent','rapportd','ControlCe','mDNSResponder'}
+ports = []
+seen = set()
+for line in lsof_out.splitlines()[1:]:
+    parts = line.split()
+    if len(parts) < 9: continue
+    m = re.search(r':(\d+)$', parts[8])
+    if not m: continue
+    key = (parts[0], m.group(1))
+    if key in seen or parts[0] in SKIP: continue
+    seen.add(key)
+    ports.append({'port':int(m.group(1)),'process':parts[0],'pid':parts[1],'note':NOTE.get(m.group(1),'')})
+
+# MCP
+mcp = []
+cfg_path = os.path.expanduser('~/.claude.json')
+BRAIN = {3096:'Subagent',3097:'Dev-Brain',3098:'Anima',3099:'KotaDB',8011:'Substrate'}
+if os.path.exists(cfg_path):
+    with open(cfg_path) as f: d = json.load(f)
+    for name, cfg in d.get('mcpServers',{}).items():
+        t = cfg.get('type', cfg.get('transportType','?'))
+        url = cfg.get('url','')
+        port = None
+        m = re.search(r':(\d+)', url)
+        if m: port = m.group(1)
+        entry = {'name':name,'type':t,'port':port}
+        if port:
+            ms = http_ms(f'http://127.0.0.1:{port}/', 0.5)
+            entry.update({'state':'UP' if (ms is not None or sock_live(int(port))) else 'DOWN','latency_ms':ms})
+        elif t == 'stdio':
+            import shutil
+            cmd = cfg.get('command','')
+            entry.update({'state':'UP' if shutil.which(cmd) else 'MISSING','command':cmd})
+            if name == 'executor' or cmd == 'executor':
+                ms = http_ms('http://127.0.0.1:7010/', 0.5)
+                entry['executor_web'] = {'port':7010,'state':'UP' if ms else 'DOWN','latency_ms':ms}
+                entry['brain_stack'] = {n:('UP' if sock_live(p) else 'DOWN') for p,n in BRAIN.items()}
+        mcp.append(entry)
+
+# Ollama
+ollama = []
+try:
+    r = subprocess.run(['ollama','list'], capture_output=True, text=True)
+    ps = subprocess.run(['ollama','ps'], capture_output=True, text=True).stdout
+    for line in r.stdout.splitlines()[1:]:
+        if not line.strip(): continue
+        parts = line.split()
+        n = parts[0] if parts else ''
+        sz = ' '.join(parts[2:4]) if len(parts)>3 else ''
+        ollama.append({'name':n,'size':sz,'state':'loaded' if n and n in ps else 'idle'})
+except: pass
+
+# System
+vm = subprocess.run(['vm_stat'], capture_output=True, text=True).stdout
+act = wir = 0
+for line in vm.splitlines():
+    if 'Pages active' in line:
+        m = re.search(r'(\d+)', line.split(':')[1]); act = int(m.group(1)) if m else 0
+    if 'Pages wired down' in line:
+        m = re.search(r'(\d+)', line.split(':')[1]); wir = int(m.group(1)) if m else 0
+ram_gb = round((act+wir)*16384/1073741824, 1)
+ram_tot = int(subprocess.run(['sysctl','-n','hw.memsize'], capture_output=True, text=True).stdout.strip())//1073741824
+df = subprocess.run(['df','-h','/'], capture_output=True, text=True).stdout.splitlines()
+df_p = df[1].split() if len(df)>1 else []
+load = subprocess.run(['sysctl','-n','vm.loadavg'], capture_output=True, text=True).stdout.strip()
+
+print(json.dumps({
+    'timestamp': time.strftime('%Y-%m-%dT%H:%M:%S'),
+    'services': services,
+    'ports': sorted(ports, key=lambda x: x['port']),
+    'mcp': mcp,
+    'ollama': ollama,
+    'system': {
+        'ram_used_gb': ram_gb, 'ram_total_gb': ram_tot,
+        'disk': f"{df_p[2]}/{df_p[1]} ({df_p[4]})" if len(df_p)>4 else '',
+        'load_avg': load
+    }
+}, indent=2))
+PYEOF
+}
+
+# ── SERVICE CONTROL (uses dev.services registry) ──────────────────────────────
+_load_svcs()  { grep -v '^\s*#' "$SERVICES_FILE" | grep -v '^\s*$'; }
+_get_row()    { _load_svcs | grep -i "^${1}|" | head -1; }
+
+_svc_up() {
+    local row=$(_get_row "$1")
+    [[ -z "$row" ]] && printf "${RED}  unknown: %s${R}\n" "$1" && return 1
     local nm tp po st
     IFS='|' read -r nm tp po st _ _ <<< "$row"
     case "$tp" in
-        launchd)
-            launchctl load -w ~/Library/LaunchAgents/${st}.plist 2>/dev/null \
-                || launchctl start "$st" 2>/dev/null || true ;;
-        process) eval "$st" & ;;
-        ephemeral) printf '%s is ephemeral — start it in your project dir.\n' "$nm" ;;
+        launchd)   launchctl start "$st" 2>/dev/null ;;
+        process)   eval "$st" &>/dev/null & ;;
+        ephemeral) printf "${YLW}  %s is ephemeral${R}\n" "$nm"; return ;;
     esac
+    sleep 1
+    local info=$(_svc_info "$nm" "$tp" "$po" "$st")
+    [[ $(printf '%s' "$info" | cut -f1) == UP ]] \
+        && printf "  ${GRN}●${R} ${WHT}%s${R} up\n" "$nm" \
+        || printf "  ${RED}✖${R} ${WHT}%s${R} failed\n" "$nm"
 }
 
-_stop_svc() {
-    local row; row=$(_get_svc_row "$1")
-    [[ -z "$row" ]] && printf 'Unknown service: %s\n' "$1" && return 1
+_svc_down() {
+    local row=$(_get_row "$1")
+    [[ -z "$row" ]] && printf "${RED}  unknown: %s${R}\n" "$1" && return 1
     local nm tp po st sp
     IFS='|' read -r nm tp po st sp _ <<< "$row"
     case "$tp" in
-        launchd)  launchctl stop "$sp" 2>/dev/null || true ;;
-        process)  eval "$sp" 2>/dev/null || true ;;
-        ephemeral) printf '%s is ephemeral — stop it in its terminal.\n' "$nm" ;;
+        launchd)   launchctl stop "$sp" 2>/dev/null ;;
+        process)   eval "$sp" 2>/dev/null ;;
+        ephemeral) printf "${YLW}  %s is ephemeral${R}\n" "$nm"; return ;;
     esac
+    printf "  ${DIM}○${R} ${WHT}%s${R} stopped\n" "$nm"
 }
 
-_restart_svc() { _stop_svc "$1"; sleep 1; _start_svc "$1"; }
+_svc_info() {
+    local nm="$1" tp="$2" po="$3" st="$4"
+    local state=DOWN pid='' mem='-' up='-'
+    case "$tp" in
+        launchd)
+            local row=$(launchctl list 2>/dev/null | awk -v l="$st" '$3==l{print $1,$2}' | head -1)
+            local lpid="${row%% *}"
+            [[ -n "$lpid" && "$lpid" =~ ^[0-9]+$ ]] && state=UP && pid="$lpid"
+            ;;
+        process|ephemeral)
+            [[ "$po" != "none" ]] && _port_live "$po" && pid=$(_pid_on "$po") && state=UP
+            ;;
+    esac
+    [[ "$po" != "none" && "$state" == UP ]] && ! _port_live "$po" && state=CRASHED
+    [[ -n "$pid" && "$pid" =~ ^[0-9]+$ ]] && mem=$(_mem_mb "$pid") && up=$(_uptime_s "$pid")
+    printf '%s\t%s\t%s\t%s' "$state" "${pid:--}" "$mem" "$up"
+}
 
-# ── dev up ────────────────────────────────────────────────────────────────────
-_cmd_up() {
-    printf '\n${BOLD}  dev up — starting all persistent services${R}\n\n'
-    while IFS='|' read -r nm tp po st sp hl; do
-        [[ "$tp" == "ephemeral" ]] && continue
+_all_up() {
+    printf "\n${BOLD}  bringing everything up${R}\n\n"
+    _load_svcs | while IFS='|' read -r nm tp po st sp hl; do
+        [[ "$tp" == ephemeral ]] && continue
         local info=$(_svc_info "$nm" "$tp" "$po" "$st")
-        local sv_state=$(printf '%s' "$info" | cut -f1)
-        if [[ "$sv_state" == "UP" ]]; then
-            printf "  ${GRN}●${R} %-14s already up\n" "$nm"
+        if [[ $(printf '%s' "$info" | cut -f1) == UP ]]; then
+            printf "  ${GRN}●${R} %-20s already up\n" "$nm"
         else
-            printf "  ${YLW}↑${R} %-14s starting...\n" "$nm"
+            printf "  ${YLW}↑${R} %-20s starting...\n" "$nm"
             case "$tp" in
-                launchd)
-                    launchctl load -w ~/Library/LaunchAgents/${st}.plist 2>/dev/null \
-                        || launchctl start "$st" 2>/dev/null || true ;;
+                launchd) launchctl start "$st" 2>/dev/null ;;
                 process) eval "$st" &>/dev/null & ;;
             esac
             sleep 2
             info=$(_svc_info "$nm" "$tp" "$po" "$st")
-            sv_state=$(printf '%s' "$info" | cut -f1)
-            if [[ "$sv_state" == "UP" ]]; then
-                printf "\033[1A\033[2K  ${GRN}●${R} %-14s up\n" "$nm"
-            else
-                printf "\033[1A\033[2K  ${RED}✖${R} %-14s FAILED\n" "$nm"
-            fi
+            printf "\033[1A\033[2K"
+            [[ $(printf '%s' "$info" | cut -f1) == UP ]] \
+                && printf "  ${GRN}●${R} %-20s up\n" "$nm" \
+                || printf "  ${RED}✖${R} %-20s failed\n" "$nm"
         fi
-    done < <(_load_services)
-    printf "\n${DIM}  Run 'dev' for full dashboard.${R}\n\n"
-}
-
-# ── dev down ──────────────────────────────────────────────────────────────────
-_cmd_down() {
-    printf '\n${BOLD}  dev down — stopping all persistent services${R}\n\n'
-    while IFS='|' read -r nm tp po st sp hl; do
-        [[ "$tp" == "ephemeral" ]] && continue
-        printf "  ${YLW}↓${R} %-14s\n" "$nm"
-        case "$tp" in
-            launchd) launchctl stop "$sp" 2>/dev/null || true ;;
-            process) eval "$sp" 2>/dev/null || true ;;
-        esac
-    done < <(_load_services)
+    done
     printf '\n'
 }
 
-# ── dev status (non-interactive) ──────────────────────────────────────────────
-_cmd_status() {
-    printf "\n${BOLD}  dev status — %s${R}\n\n" "$(date '+%Y-%m-%d %H:%M:%S')"
-    _panel_services
-    _panel_ports
-    _panel_system
-}
-
-# ── Interactive TUI ───────────────────────────────────────────────────────────
-_tui() {
-    local old_stty; old_stty=$(stty -g 2>/dev/null || true)
-    trap "stty '$old_stty' 2>/dev/null; tput cnorm 2>/dev/null; clear; exit 0" INT TERM EXIT
-    tput civis 2>/dev/null || true
-    stty -echo -icanon min 0 time 0 2>/dev/null || true
-
-    local last=0
-    while true; do
-        local now; now=$(date +%s)
-        (( now - last >= REFRESH_INTERVAL )) && { _render_all; last=$now; }
-
-        local key=''
-        IFS= read -r -t 0.2 -k 1 key 2>/dev/null || true
-        case "$key" in
-            q|Q) break ;;
-            r|R) last=0 ;;
-            u|U)
-                stty "$old_stty" 2>/dev/null; tput cnorm; clear
-                _cmd_up
-                stty -echo -icanon min 0 time 0 2>/dev/null; tput civis
-                last=0 ;;
-            d|D)
-                stty "$old_stty" 2>/dev/null; tput cnorm; clear
-                _cmd_down; sleep 1
-                stty -echo -icanon min 0 time 0 2>/dev/null; tput civis
-                last=0 ;;
+_all_down() {
+    printf "\n${BOLD}  bringing everything down${R}\n\n"
+    _load_svcs | while IFS='|' read -r nm tp po st sp hl; do
+        [[ "$tp" == ephemeral ]] && continue
+        printf "  ${DIM}○${R} %-20s stopping\n" "$nm"
+        case "$tp" in
+            launchd) launchctl stop "$sp" 2>/dev/null ;;
+            process) eval "$sp" 2>/dev/null ;;
         esac
     done
-
-    stty "$old_stty" 2>/dev/null || true
-    tput cnorm 2>/dev/null || true
-    clear
+    printf '\n'
 }
 
-# ── Entry ─────────────────────────────────────────────────────────────────────
+# ── HELP ──────────────────────────────────────────────────────────────────────
+_help() {
+    local cols=$(tput cols 2>/dev/null || printf 80)
+    printf "\n${BOLD}${WHT}  dev${R} — developer environment snapshot\n\n"
+
+    printf "${BOLD}${CYN}  SNAPSHOT${R}\n"
+    printf "${DIM}  %s${R}\n" "$(_hr $((cols-4)))"
+    printf "  ${WHT}%-32s${R} %s\n" "dev"           "full snapshot (default)"
+    printf "  ${WHT}%-32s${R} %s\n" "dev status"    "alias for dev"
+    printf "  ${WHT}%-32s${R} %s\n" "dev watch [N]" "auto-refresh every N seconds (default: 5)"
+    printf "  ${WHT}%-32s${R} %s\n" "dev --json"    "structured JSON for scripting / agents"
+    printf '\n'
+
+    printf "${BOLD}${CYN}  CONTROL${R}\n"
+    printf "${DIM}  %s${R}\n" "$(_hr $((cols-4)))"
+    printf "  ${WHT}%-32s${R} %s\n" "dev up"              "start all persistent services"
+    printf "  ${WHT}%-32s${R} %s\n" "dev up <name>"       "start one service"
+    printf "  ${WHT}%-32s${R} %s\n" "dev down"            "stop all persistent services"
+    printf "  ${WHT}%-32s${R} %s\n" "dev down <name>"     "stop one service"
+    printf "  ${WHT}%-32s${R} %s\n" "dev restart"         "restart all persistent services"
+    printf "  ${WHT}%-32s${R} %s\n" "dev restart <name>"  "restart one service"
+    printf "  ${WHT}%-32s${R} %s\n" "dev logs <name>"     "tail log file for a launchd service"
+    printf '\n'
+
+    printf "${BOLD}${CYN}  PANELS${R}\n"
+    printf "${DIM}  %s${R}\n" "$(_hr $((cols-4)))"
+    printf "  ${DIM}%-16s${R}  %s\n" "SERVICES"    "LaunchAgents — state · port · latency · mem · uptime"
+    printf "  ${DIM}%-16s${R}  %s\n" "PORTS"       "all TCP listeners (system noise filtered)"
+    printf "  ${DIM}%-16s${R}  %s\n" "MCP SERVERS" "~/.claude.json — liveness · executor web · brain stack"
+    printf "  ${DIM}%-16s${R}  %s\n" "MODELS"      "Ollama · Whisper (Tuna STT) · Apple on-device"
+    printf "  ${DIM}%-16s${R}  %s\n" "SYSTEM"      "RAM · Disk · Load"
+    printf '\n'
+
+    printf "${BOLD}${CYN}  REGISTRY${R}  ${DIM}(for up/down/restart)${R}\n"
+    printf "${DIM}  %s${R}\n" "$(_hr $((cols-4)))"
+    printf "  ${DIM}%s${R}\n\n" "$SERVICES_FILE"
+}
+
+# ── ENTRY ─────────────────────────────────────────────────────────────────────
 case "${1:-}" in
-    up)      _cmd_up ;;
-    down)    _cmd_down ;;
-    status)  _cmd_status ;;
-    start)   [[ -z "${2:-}" ]] && printf 'Usage: dev start <name>\n' && exit 1; _start_svc "$2" ;;
-    stop)    [[ -z "${2:-}" ]] && printf 'Usage: dev stop <name>\n' && exit 1; _stop_svc "$2" ;;
-    restart) [[ -z "${2:-}" ]] && printf 'Usage: dev restart <name>\n' && exit 1; _restart_svc "$2" ;;
-    '')      _tui ;;
-    *)       printf 'Usage: dev [up|down|status|start <n>|stop <n>|restart <n>]\n       dev  (no args) → live TUI\n' ;;
+    ''|status)
+        _status ;;
+    watch)
+        _watch "${2:-5}" ;;
+    --json)
+        _json_output ;;
+    logs)
+        _logs "${2:-}" ;;
+    up)
+        [[ -n "${2:-}" ]] && _svc_up "$2" || _all_up ;;
+    down)
+        [[ -n "${2:-}" ]] && _svc_down "$2" || _all_down ;;
+    restart)
+        if [[ -n "${2:-}" ]]; then
+            _svc_down "$2"; sleep 1; _svc_up "$2"
+        else
+            _all_down; sleep 1; _all_up
+        fi ;;
+    help|-h|--h|-help|--help)
+        _help ;;
+    *)
+        printf "${RED}  unknown: %s${R}\n" "$1"
+        _help ;;
 esac

@@ -71,13 +71,13 @@ else
   warn "cargo not found; skipping cargo installs (install Rust first)."
 fi
 
-log "Linking shell config"
-link_file "$ROOT_DIR/shell/.zshrc" "$HOME/.zshrc"
-link_file "$ROOT_DIR/shell/.zprofile" "$HOME/.zprofile"
+log "Copying shell config (one-time, editable locally)"
+cp "$ROOT_DIR/shell/.zshrc" "$HOME/.zshrc"
+cp "$ROOT_DIR/shell/.zprofile" "$HOME/.zprofile"
 
-log "Linking git config"
-link_file "$ROOT_DIR/git/.gitconfig" "$HOME/.gitconfig"
-link_file "$ROOT_DIR/git/.gitignore_global" "$HOME/.gitignore_global"
+log "Copying git config (one-time, editable locally)"
+cp "$ROOT_DIR/git/.gitconfig" "$HOME/.gitconfig"
+cp "$ROOT_DIR/git/.gitignore_global" "$HOME/.gitignore_global"
 
 log "Installing harness configs"
 # Claude Desktop
@@ -127,7 +127,7 @@ Next manual steps:
 2) Copy private material manually (never commit):
    - ~/.ssh
    - ~/.aws
-   - ~/.executor
+
 3) Install non-brew binaries:
    - rtk (manual binary install to ~/.local/bin)
    - opencode custom installer (~/.opencode/bin)

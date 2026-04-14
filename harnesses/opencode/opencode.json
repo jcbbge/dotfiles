@@ -1,14 +1,8 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "executor": {
-      "type": "remote",
-      "url": "http://localhost:8788/mcp"
-    }
-  },
   "plugin": [
     "./plugins/rtk.ts",
-    "./plugins/session-lifecycle.ts",
-    "./plugins/smart-search.ts"
+    "./plugins/smart-search.ts",
+    "./plugins/composto.ts"
   ]
 }

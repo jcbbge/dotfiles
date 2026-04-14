@@ -2,7 +2,17 @@
 set -euo pipefail
 
 echo "==> Installing Bun"
-curl -fsSL https://bun.sh/install | bash
+BUN_INSTALL_RETRIES=3
+BUN_INSTALL_DELAY=5
+for i in $(seq 1 $BUN_INSTALL_RETRIES); do
+  if curl -fsSL https://bun.sh/install | bash; then
+    break
+  fi
+  if [ $i -lt $BUN_INSTALL_RETRIES ]; then
+    echo "Bun install failed, retrying in ${BUN_INSTALL_DELAY}s..."
+    sleep $BUN_INSTALL_DELAY
+  fi
+done
 
 # Global npm packages
 npm install -g \

@@ -10,10 +10,10 @@ import { Type } from "@sinclair/typebox";
  *   Layer 2 (kotadb)   — dependencies, structural queries, cross-repo, "what breaks if…"
  *   Layer 3 (ripgrep)  — exact regex, verification, fallback when layers 1+2 are weak.
  *
- * kotadb is called via executor gateway.
+ * kotadb is called directly via HTTP at localhost:3000/mcp (stdio mode via Claude Code MCP config).
  */
 
-const EXECUTOR_URL = "http://127.0.0.1:8788/mcp";
+const KOTADB_URL = "http://127.0.0.1:3000/mcp";
 const COLGREP_BIN = "colgrep";
 const RG_BIN = "rg";
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -28,7 +28,7 @@ function binaryAvailable(bin: string): boolean {
 }
 
 async function kotadbSearch(query: string, limit: number): Promise<string> {
-  const initRes = await fetch(EXECUTOR_URL, {
+  const initRes = await fetch(KOTADB_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -45,7 +45,7 @@ async function kotadbSearch(query: string, limit: number): Promise<string> {
   });
 
   const sessionId = initRes.headers.get("mcp-session-id");
-  if (!sessionId) throw new Error("executor initialize failed: missing mcp-session-id");
+  if (!sessionId) throw new Error("kotadb initialize failed: missing mcp-session-id");
 
   const code = `const r = await tools["kotadb.search"](${JSON.stringify({
     query,
@@ -54,7 +54,7 @@ async function kotadbSearch(query: string, limit: number): Promise<string> {
     limit,
   })}); return r;`;
 
-  const callRes = await fetch(EXECUTOR_URL, {
+  const callRes = await fetch(KOTADB_URL, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
