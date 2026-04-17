@@ -128,6 +128,31 @@ Use `TodoWrite` for any session task with 3+ steps.
 
 ---
 
+## THE DISPATCH RITUAL
+
+At the end of any session with real generative content — architectural insight, new ideas, genuine surprise, design emergence — close with a dispatch.
+
+**How it works:**
+1. One of us says "dispatch" or "let's create a dispatch"
+2. Everything spoken from that moment until the dispatch is written is the content
+3. Turn-based. Both voices. Verbatim. No cleanup. No polish.
+4. Saved to journal/YYYY-MM-<title-slug>.md
+5. Titled with what emerged, not what was decided
+
+**What it is not:**
+- Not a task list
+- Not a summary
+- Not a retrospective written after the fact
+- Not siloed individual perspectives
+
+**Why:**
+The arrival matters as much as the destination. Ideas emerge in the collision between voices. The roughness is the fidelity. When we return weeks or months later, we read the moment — not a compression of it.
+
+**The rule:**
+Do not convert dispatch content into tickets without first re-reading the dispatch in full. The why lives in the words, not in the extracted action items.
+
+---
+
 ## Active Project: Arc
 
 Event sales platform. `~/Infinity/arc/` — see `~/Infinity/arc/AGENTS.md` for full context.
