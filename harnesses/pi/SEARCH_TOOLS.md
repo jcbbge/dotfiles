@@ -110,50 +110,53 @@ composto ir apps/api/src/routes/quotes.ts L1
 
 ---
 
-## 3. smart-search — 3-Layer Hybrid Search
+## 3. smart_search — 4-Layer Hybrid Search (Pi Tool)
 
-**Purpose:** Search across your codebase with semantic intelligence.
+**Purpose:** Unified code search. Registered as a pi tool — call it as a tool, not a CLI command.
 
-**Requirements:**
-- KotaDB running on port 3000 (`cd ~/kotadb/app && bun run src/index.ts`)
-- No executor needed
+**No external services required.** All layers run locally via binaries.
 
 ### When to Use
 
-| Layer | What It Searches | Use When |
+| Layer | What It Searches | Trigger |
 |-------|----------------|---------|
-| **Layer 1 (colgrep)** | Project code, semantic + hybrid | Primary search — "where is X implemented?" |
-| **Layer 2 (kotadb)** | Dependencies, structural, cross-repo | "what breaks if I change X?" |
-| **Layer 3 (ripgrep)** | Exact regex, verification | Fallback when layers 1+2 are weak |
+| **Layer 1 (colgrep)** | Current project, semantic + hybrid | Default; project queries |
+| **Layer 2 (coraline)** | Rust, Zig, Python, Swift, Go, C in ~/source | `repo: "zig"` or `scope: "source"` |
+| **Layer 3 (pickbrain)** | Past sessions, agent memory, context | `scope: "memory"` |
+| **Layer 4 (ripgrep)** | Exact regex, fallback | `pattern: "..."` or no other results |
 
-### How It Works
+### How to Call
 
-1. First tries colgrep (project code, semantic)
-2. Falls back to kotadb (Layer 2 - hits `http://localhost:3000` directly)
-3. Finally ripgrep for exact matches
-
-### CLI Examples
-
-```bash
-# Primary search (colgrep first)
-smart-search "token savings"
-smart-search "quote generation"
-smart-search "what does the validateToolCall function do"
-
-# Cross-repo / dependency queries
-smart-search "KotaDB oracle"
-smart-search "what breaks if I remove the parseStreamingJson"
-
-# Verification (exact)
-smart-search --regex "function.*validate.*"
 ```
+smart_search(query: "std.mem.Allocator alloc", repo: "zig")    # coraline — Zig repo
+smart_search(query: "quote creation")                          # colgrep — project
+smart_search(query: "dispatch pattern", scope: "memory")       # pickbrain — memory
+smart_search(pattern: "function.*validate")                    # ripgrep — exact
+```
+
+### Parameters
+
+| Param | Type | Notes |
+|-------|------|-------|
+| `query` | string | Required. Natural language. |
+| `repo` | string? | Repo in ~/source (e.g. `"zig"`, `"surrealdb"`) — forces coraline |
+| `scope` | string? | `auto` \| `project` \| `source` \| `exact` \| `memory` |
+| `pattern` | string? | Exact regex — forces ripgrep |
+| `limit` | number? | Max results (default 10) |
+
+### Indexed repos for coraline (~/source/)
+
+| Repo | Nodes | Language |
+|------|-------|----------|
+| `zig` | 148,024 | Zig |
+| `surrealdb` | 24,237 | Rust |
 
 ### Key Nuances
 
-- KotaDB runs on port 3000, started via `cd ~/kotadb/app && bun run src/index.ts`
-- No executor — smart-search hits KotaDB directly at `http://localhost:3000`
-- Most effective for "what does X do?" and "where is X?"
-- Falls back to ripgrep for exact regex matching
+- **No services required** — coraline, colgrep, pickbrain, ripgrep are all CLI binaries
+- `repo:` param routes directly to coraline — primary way to search Zig/Rust source
+- Auto-routing detects zig/surrealdb keywords and routes to coraline automatically
+- Most effective for "what does X do?" (colgrep) and symbol lookups (coraline)
 
 ---
 
@@ -300,9 +303,10 @@ Need to UNDERSTAND code structure?
 ├─ Yes → composto ir <file> L1
 └─ No → Need to FIND code?
     ├─ Yes → What's the scope?
-    │   ├─ My project code → smart-search
-    │   ├─ Dependencies / cross-repo → smart-search (Layer 2 / kotadb MCP)
-    │   └─ Exact match / verify → ripgrep
+    │   ├─ My project code → smart_search(query: "...")
+    │   ├─ Rust/Zig/Go/Python/Swift repo → smart_search(query: "...", repo: "<name>")
+    │   ├─ Agent memory / past sessions → smart_search(query: "...", scope: "memory")
+    │   └─ Exact match / verify → smart_search(pattern: "...")
     └─ No → Need WEB info?
         ├─ Yes → perplexity-search
         └─ No → Plain Read or ls
@@ -312,15 +316,17 @@ Need to UNDERSTAND code structure?
 
 ## Quick Reference
 
-| Task | Tool | Command |
-|------|------|--------|
+| Task | Tool | How |
+|------|------|-----|
 | CLI output compression | rtk | `rtk git status`, `rtk test cargo test` |
 | Understand file before editing | composto | `composto ir src/file.ts L1` |
 | Understand module structure | composto | `composto context src/ --budget 4000` |
 | Scan directory | composto | `composto scan src/` |
-| Find code in project | smart-search | `smart-search "function name"` |
-| Cross-repo / dependency | KotaDB MCP | `analyze_change_impact`, `find_usages` |
-| Exact verification | ripgrep | `rg "exact string"` |
+| Find code in project | smart_search | `smart_search(query: "...")` |
+| Zig / Rust / Swift source | smart_search | `smart_search(query: "...", repo: "zig")` |
+| Agent memory / past context | smart_search | `smart_search(query: "...", scope: "memory")` |
+| Exact regex verification | smart_search | `smart_search(pattern: "...")` |
+| JS/TS library intelligence | KotaDB MCP | `mcp__kotadb__find_usages`, `analyze_change_impact` |
 | Web research | perplexity | `/perplexity query` |
 
 ---
@@ -328,11 +334,11 @@ Need to UNDERSTAND code structure?
 ## Service Startup
 
 ```bash
-# KotaDB HTTP (optional, for smart-search Layer 2):
-cd ~/kotadb/app && KOTADB_PATH=~/.kotadb/kota.db bun run src/index.ts
-
-# KotaDB stdio (Claude Code MCP — auto-started by claude):
+# KotaDB stdio (auto-started by claude/pi via MCP config):
 # Configured in ~/.claude/mcp.json — no manual start needed
+
+# Coraline (no service needed — pure CLI):
+# coraline is a binary at ~/.cargo/bin/coraline — smart_search calls it directly
 ```
 
 ---
@@ -341,14 +347,14 @@ cd ~/kotadb/app && KOTADB_PATH=~/.kotadb/kota.db bun run src/index.ts
 
 1. **rtk for CLI output**: Use `rtk <command>` for any shell command output — git, tests, builds.
 
-2. **composto L1 vs raw Read:** L1 gives structure + types but reconstructs via LLM. If you need to verify exact code exists, use ripgrep.
+2. **composto L1 vs raw Read:** L1 gives structure + types but reconstructs via LLM. If you need to verify exact code exists, use ripgrep via smart_search.
 
-3. **smart-search vs composto:** smart-search finds WHERE code IS. composto tells you WHAT code DOES (structure).
+3. **smart_search vs composto:** smart_search finds WHERE code IS. composto tells you WHAT code DOES (structure).
 
-4. **KotaDB MCP vs HTTP:** MCP (stdio) is the primary path in Claude Code — auto-started. HTTP server is optional, used by smart-search Layer 2. Both use `KOTADB_PATH=~/.kotadb/kota.db`.
+4. **KotaDB for JS/TS, Coraline for everything else:** KotaDB indexes JS/TS at AST level for dep graphs. Coraline handles Rust, Zig, Python, Swift, Go, C/C++. smart_search routes automatically.
 
-5. **Verification ALWAYS uses ripgrep:** After any IR-based search, if making changes, verify with ripgrep.
+5. **Verification ALWAYS uses ripgrep:** After any semantic search, if making changes, verify with `smart_search(pattern: "exact string")`.
 
-6. **Tool precedence:** rtk → smart-search → composto → ripgrep.
+6. **Tool precedence in pi:** smart_search → composto → KotaDB MCP (for JS/TS impact analysis).
 
-7. **No executor:** Executor has been removed. KotaDB is wired directly — no intermediary.
+7. **No executor, no HTTP services:** smart_search layers 1-4 are all local CLI binaries. No ports needed.

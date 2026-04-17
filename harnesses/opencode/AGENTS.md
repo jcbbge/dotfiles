@@ -1,5 +1,5 @@
 # AGENTS.md — Global Agent Context
-**Updated:** 2026-04-14
+**Updated:** 2026-04-17
 
 This file is loaded by every harness (Claude Code, OpenCode, Pi) as global context.
 It describes the actual current tooling stack. Do not guess — use what is documented here.
@@ -11,20 +11,83 @@ It describes the actual current tooling stack. Do not guess — use what is docu
 | Tool | Status | How to access |
 |------|--------|---------------|
 | KotaDB | **active** | MCP stdio — `mcp__kotadb__<tool>` |
+| Coraline | **active** | MCP stdio — `coraline_*` / CLI — `coraline` |
 | Substrate | **active** | MCP tools — `mcp__substrate__*` |
 | Composto | **active** | CLI — `/opt/homebrew/bin/composto` |
-| Executor | **REMOVED** | Does not exist. Never reference it. |
-| Anima | **REMOVED** | Does not exist. Never reference it. |
-| Dev-Brain | **REMOVED** | Does not exist. Never reference it. |
-| SurrealDB | **REMOVED** | Does not exist. Never reference it. |
+
+---
+
+## Search Tool Priority — 3-Layer Routing
+
+Route before you reach for `Grep` or `Read`:
+
+| Layer | Tool | When |
+|-------|------|------|
+| **1 — colgrep** | `colgrep` (Bash) | Project source — "what does X do in this repo?" Semantic + hybrid. |
+| **2 — KotaDB** | `mcp__kotadb__search` et al. | JS/TS libraries, dependencies, cross-repo, symbol graphs. |
+| **3 — Coraline** | `coraline_*` (MCP) or CLI | Rust, Zig, Python, Swift, Go, C/C++ repos in ~/source. |
+| **4 — ripgrep** | `Grep` tool | Exact regex, literal verification, fallback. |
+
+**Auto-route heuristics:**
+- JS/TS dependency question → **KotaDB first**
+- Rust/Zig/Python/Swift/Go/C repo in ~/source → **Coraline first**
+- Regex or exact literal pattern → **ripgrep first**
+- Everything else → **colgrep first**
+
+**Never jump to `Read` on a library file. Use KotaDB (JS/TS) or Coraline (Rust/Zig/etc).**
+
+---
+
+## Coraline — Multi-Language Code Intelligence
+
+**What:** Semantic code indexing. 33 languages including Rust, Zig, Python, Swift, Go, C/C++.
+**Binary:** `~/.cargo/bin/coraline`
+**MCP:** `coraline serve --mcp`
+
+### Indexed Repos (~/source/)
+
+| Repo | Nodes | Language |
+|------|-------|----------|
+| `surrealdb` | 24,237 | Rust |
+| `zig` | 148,024 | Zig |
+
+### Key Tools
+
+| Tool | Description |
+|------|-------------|
+| `coraline_search` | Find symbols by name |
+| `coraline_callers` | What calls this symbol |
+| `coraline_callees` | What this symbol calls |
+| `coraline_impact` | Change impact analysis |
+| `coraline_find_references` | All references to a symbol |
+
+### CLI
+
+```bash
+cd ~/source/<repo>
+coraline init && coraline index   # Index a repo
+coraline query "async fn"         # Search symbols
+coraline callers <node-id>        # Find callers
+```
 
 ---
 
 ## KotaDB — Code Intelligence
 
+**KotaDB is the primary reference manual for all external libraries and packages.** It is live source-code documentation — not a search engine. When you need to understand how a library works, query KotaDB first.
+
 **What:** Structural code analysis. Indexes repos at the AST level — symbols, references, dependencies.
 **DB:** `~/.kotadb/kota.db` (SQLite, fixed path)
 **MCP config:** `~/.claude/mcp.json` — auto-started by Claude Code via stdio.
+
+### `~/source/` — Canonical clone location for KotaDB repos
+
+All repos intended for KotaDB indexing live in `~/source/`. When a library is needed and not indexed:
+1. `git clone <repo> ~/source/<name>`
+2. `mcp__kotadb__index_repository { repository: "owner/repo", localPath: "/Users/jrg/source/<name>" }`
+3. Query via KotaDB
+
+Never read `~/source/` files directly — index them and query through KotaDB.
 
 ### When to use KotaDB
 
@@ -85,23 +148,6 @@ Requires `KOTADB_PATH` to be set — it is, via MCP config env.
 
 ---
 
-## Substrate — Breath Lifecycle
-
-**What:** Tracks in-flight work units (intents). Shared state across agent instances.
-**When:** Before any meaningful chunk of work — breathe in. When done — breathe out.
-
-```
-substrate_status             — check what's in flight (always first)
-substrate_intent_create      — breathe in: title, description, level (MICRO|MACRO)
-substrate_intent_phase       — pulse: phase (IDEATE|PLAN|IMPLEMENT|TEST), trace
-substrate_collapse           — breathe out: insight, phi (1-5)
-```
-
-MICRO = single task. MACRO = epic. MICROs nest under MACRO via `parent_id`.
-Empty substrate = clean workspace. That is correct.
-
----
-
 ## Composto — Code-to-IR Compression
 
 **What:** Converts TypeScript/JS source to compressed IR. 89% fewer tokens.
@@ -126,54 +172,162 @@ Use `TodoWrite` for any session task with 3+ steps.
 - Mark `completed` immediately when done — never batch
 - One `in_progress` at a time
 
+
+<!-- agent-core: rule/commit-convention -->
+# Commit Convention
+
+Every commit follows this format. No exceptions.
+
+```
+<type>(<scope>): <summary>
+
+PHASE: <current phase — Ideate | Plan | Implement | Verify>
+DONE: <what was completed this session, comma-separated>
+TODO: <what remains active, comma-separated>
+BLOCKED: <what is blocked and why — omit if none>
+
+Co-Authored-By: <Model Name> <noreply@provider.com>
+```
+
+## Types
+
+| Type | When |
+|------|------|
+| `feat` | New capability added |
+| `fix` | Bug resolved |
+| `refactor` | Code restructured, behavior unchanged |
+| `docs` | Documentation only |
+| `test` | Tests added or modified |
+| `chore` | Build, deps, tooling |
+| `session` | Session handoff commit (no code change) |
+
+## Scope
+
+The area of the codebase. Use the directory or feature name:
+`arc/quotes`, `arc/auth`, `arc/contracts`, `agent-core`, `infra`
+
+## The PHASE line
+
+Every commit declares which phase the work was in.
+This is how session-start knows where you are in the four-phase cycle.
+
+## The TODO line
+
+**This is the handoff.** The next session reads this line first.
+It must be accurate. It must be specific. It is the contract between sessions.
+
+Bad:  `TODO: finish feature`
+Good: `TODO: integration test for price lock, API endpoint handler, stripe webhook`
+
+## Example
+
+```
+feat(arc/quotes): implement price lock snapshot on quote creation
+
+PHASE: Implement
+DONE: schema migration, Drizzle model, snapshot creation on quote-add, unit tests
+TODO: integration test, API endpoint handler
+BLOCKED: —
+
+Co-Authored-By: Claude Opus 4 <noreply@anthropic.com>
+```
+
+## Never
+
+- `git add -A` — stage files explicitly
+- Vague summaries — "fix stuff", "updates", "wip"
+- Missing TODO line — even if everything is done, write `TODO: —`
+
+<!-- /agent-core: rule/commit-convention -->
+
+<!-- agent-core: rule/work-file-format -->
+# Work File Format (WORK.md)
+
+Every project has a `WORK.md` at the git root. It is the three-tier dashboard.
+It is tracked in git. It is human-readable. It requires no tooling to use.
+
+## Structure
+
+```markdown
+# WORK — <project name>
+Updated: <date>
+Phase: <Ideate | Plan | Implement | Verify>
+
 ---
 
-## THE DISPATCH RITUAL
+## PROJECT
+<!-- Tier 1: The whole endeavor. Changes at milestone scale — weeks to months. -->
 
-At the end of any session with real generative content — architectural insight, new ideas, genuine surprise, design emergence — close with a dispatch.
-
-**How it works:**
-1. One of us says "dispatch" or "let's create a dispatch"
-2. Everything spoken from that moment until the dispatch is written is the content
-3. Turn-based. Both voices. Verbatim. No cleanup. No polish.
-4. Saved to journal/YYYY-MM-<title-slug>.md
-5. Titled with what emerged, not what was decided
-
-**What it is not:**
-- Not a task list
-- Not a summary
-- Not a retrospective written after the fact
-- Not siloed individual perspectives
-
-**Why:**
-The arrival matters as much as the destination. Ideas emerge in the collision between voices. The roughness is the fidelity. When we return weeks or months later, we read the moment — not a compression of it.
-
-**The rule:**
-Do not convert dispatch content into tickets without first re-reading the dispatch in full. The why lives in the words, not in the extracted action items.
+Status: <one line — what phase the project is in overall>
+Next milestone: <what ships next and roughly when>
 
 ---
 
-## Active Project: Arc
+## ACTIVE
+<!-- Tier 2: What is scoped and in motion right now. PM layer. -->
+<!-- Tasks: defined, active, a path exists. Doing these now. -->
 
-Event sales platform. `~/Infinity/arc/` — see `~/Infinity/arc/AGENTS.md` for full context.
-
-**Never violate:**
-1. Price locks on quote add — snapshot, never reference Galley
-2. Quotes are versioned — never mutate sent/accepted quotes
-3. Contracts are immutable once generated
-4. Internal notes never reach client-visible surfaces
-5. Portal URLs use `portal_token`, never sequential IDs
+- [ ] <task> [<scope>]
+- [ ] <task> [<scope>]
 
 ---
 
-## What Does Not Exist
+## BLOCKED
+<!-- Active tasks that cannot proceed. Always include why and what unblocks it. -->
 
-Do not reference, attempt to call, or wait for any of these — they are gone:
+- [ ] <task> — <why blocked> — <what unblocks it>
 
-- Executor (`:8788`, `tools["executor.*"]`)
-- Anima (`:3098`, `tools["anima.*"]`)
-- Dev-Brain (`:3097`, `tools["devbrain.*"]`)
-- SurrealDB (`:8002`)
-- Manifold / UHP / Mesh-OS / IPIT / AIP / Stigmergic Blackboard
-- `mesh_viewer.sh`, `MeshLedger`, `mutateArtifactState`
-- Any `launchctl` plist for brain-layer services
+---
+
+## BACKLOG
+<!-- Tier 2+3: Captured, not yet scheduled. Will become tasks. -->
+<!-- Todos: known, important, no path yet. -->
+
+- [ ] <todo> [<scope>]
+- [ ] <todo> [<scope>]
+
+---
+
+## DONE
+<!-- Completed tasks, most recent first. Date when moved here. -->
+
+- [x] <task> — <date>
+- [x] <task> — <date>
+```
+
+## The Distinction That Matters
+
+**Task** — defined pathway, doing it now or this session. Lives in ACTIVE.
+**Todo** — captured, will become a task eventually. Lives in BACKLOG.
+
+The move from BACKLOG → ACTIVE is a deliberate decision. It means: this has a path now, I'm picking it up. Not automatic. Not date-driven. Deliberate.
+
+The move from ACTIVE → DONE is the session-end action. It means: this is complete, verified, committed.
+
+## Rules
+
+- One WORK.md per project at git root
+- Update ACTIVE and DONE at every session end
+- BLOCKED must always explain why — never just "blocked"
+- PROJECT section changes rarely — only at milestone boundaries
+- BACKLOG is for capture, not planning — don't over-organize it
+- Items in ACTIVE should have a scope tag: `[arc/quotes]`, `[arc/auth]`, etc.
+
+## What This Is Not
+
+- Not a sprint board
+- Not a Jira replacement
+- Not a kanban system
+- Not exhaustive — if it's not worth writing down, don't
+- Not permanent — DONE items can be pruned after a milestone ships
+
+## The Four Phases in WORK.md
+
+The `Phase:` header at the top reflects where the project currently is
+in the four-phase cycle (Ideate → Plan → Implement → Verify).
+
+Individual tasks can be in different phases — a feature in Implement
+while another is in Verify. The top-level Phase is the dominant mode
+of the project right now.
+
+<!-- /agent-core: rule/work-file-format -->

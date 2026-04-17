@@ -3,19 +3,21 @@ import { execSync, spawnSync } from "child_process";
 import { Type } from "@sinclair/typebox";
 
 /**
- * smart-search — 3-layer hybrid search extension for pi.
+ * smart-search — 4-layer hybrid search extension for pi.
  *
- * Routing logic:
- *   Layer 1 (colgrep)  — project code, semantic + hybrid. Primary.
- *   Layer 2 (kotadb)   — dependencies, structural queries, cross-repo, "what breaks if…"
- *   Layer 3 (ripgrep)  — exact regex, verification, fallback when layers 1+2 are weak.
- *
- * kotadb is called directly via HTTP at localhost:3000/mcp (stdio mode via Claude Code MCP config).
+ * Routing:
+ *   Layer 1 (colgrep)  — current project, semantic + hybrid.
+ *   Layer 2 (coraline) — Rust/Zig/Python/Swift/Go/C repos in ~/source.
+ *   Layer 3 (pickbrain) — past sessions, memory, context.
+ *   Layer 4 (ripgrep)  — exact regex, fallback.
  */
 
-const KOTADB_URL = "http://127.0.0.1:3000/mcp";
+const SOURCE_ROOT = "/Users/jrg/source";
 const COLGREP_BIN = "colgrep";
 const RG_BIN = "rg";
+const PICKBRAIN_BIN = "pickbrain";
+const CORALINE_BIN = "coraline";
+
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 function binaryAvailable(bin: string): boolean {
@@ -27,77 +29,6 @@ function binaryAvailable(bin: string): boolean {
   }
 }
 
-async function kotadbSearch(query: string, limit: number): Promise<string> {
-  const initRes = await fetch(KOTADB_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "initialize",
-      params: {
-        protocolVersion: "2024-11-05",
-        capabilities: {},
-        clientInfo: { name: "smart-search", version: "1.0.0" },
-      },
-    }),
-    signal: AbortSignal.timeout(5000),
-  });
-
-  const sessionId = initRes.headers.get("mcp-session-id");
-  if (!sessionId) throw new Error("kotadb initialize failed: missing mcp-session-id");
-
-  const code = `const r = await tools["kotadb.search"](${JSON.stringify({
-    query,
-    scope: ["code", "symbols"],
-    output: "snippet",
-    limit,
-  })}); return r;`;
-
-  const callRes = await fetch(KOTADB_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "mcp-session-id": sessionId,
-    },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 2,
-      method: "tools/call",
-      params: {
-        name: "execute",
-        arguments: { code },
-      },
-    }),
-    signal: AbortSignal.timeout(8000),
-  });
-
-  const data = (await callRes.json()) as any;
-  if (data?.error || data?.result?.isError) return "";
-
-  const text = data?.result?.content?.[0]?.text ?? "";
-  const parseMaybeJson = (value: any): any => {
-    if (typeof value !== "string") return value;
-    try {
-      return JSON.parse(value);
-    } catch {
-      return value;
-    }
-  };
-
-  const parsed = parseMaybeJson(text);
-  const unwrapped = parseMaybeJson(parsed?.content?.[0]?.text ?? parsed);
-  const results = unwrapped?.results?.code ?? unwrapped?.results ?? [];
-
-  if (!Array.isArray(results) || results.length === 0) {
-    return typeof text === "string" ? text : "";
-  }
-
-  return results
-    .slice(0, limit)
-    .map((r: any) => `[${r.file ?? r.path ?? "?"}]\n${r.snippet ?? r.content ?? ""}`)
-    .join("\n\n");
-}
 function colgrep(query: string, args: string[]): string {
   const result = spawnSync(COLGREP_BIN, [query, "--json", ...args], {
     encoding: "utf8",
@@ -128,24 +59,40 @@ function ripgrep(pattern: string, cwd: string, extra: string[]): string {
   return result.stdout?.trim() ?? "";
 }
 
+function pickbrain(query: string, limit: number): string {
+  const result = spawnSync(PICKBRAIN_BIN, [query], {
+    encoding: "utf8",
+    timeout: 15_000,
+  });
+  if (result.status !== 0 || !result.stdout) return "";
+  const lines = result.stdout.trim().split("\n");
+  return lines.slice(0, limit * 15).join("\n");
+}
+
+function coraline(query: string, repo: string, limit: number): string {
+  const cwd = `${SOURCE_ROOT}/${repo}`;
+  const result = spawnSync(CORALINE_BIN, ["query", query], {
+    encoding: "utf8",
+    timeout: 15_000,
+    cwd,
+  });
+  if (result.status !== 0 || !result.stdout) return "";
+  const lines = result.stdout.trim().split("\n");
+  return lines.slice(0, limit * 3).join("\n");
+}
+
 // ── routing logic ─────────────────────────────────────────────────────────────
 
-/**
- * Classify the query to pick starting layer.
- * Heuristics — not magic:
- *   - "node_modules", "vendor", "depends", "import", "what breaks", "dependency"
- *     → start with kotadb
- *   - regex chars or "exact" / file extension patterns
- *     → start with ripgrep
- *   - everything else → colgrep
- */
-function classifyScope(query: string): "project" | "deps" | "exact" {
+function classifyScope(query: string): "project" | "source" | "exact" | "memory" {
   const q = query.toLowerCase();
-  if (/node_modules|vendor|depend|import|what breaks|impact|usage across|cross.repo/.test(q)) {
-    return "deps";
-  }
-  if (/exact|regex|pattern|literal|\\\w|\.ts$|\.rs$|\.go$/.test(q)) {
+  if (/exact|regex|pattern|literal|\\\w/.test(q)) {
     return "exact";
+  }
+  if (/session|conversation|memory|past|previously|chat|discussed/.test(q)) {
+    return "memory";
+  }
+  if (/surrealdb|zig\s|rust\s|in\s+source|~/i.test(q)) {
+    return "source";
   }
   return "project";
 }
@@ -155,75 +102,98 @@ function classifyScope(query: string): "project" | "deps" | "exact" {
 export default function (pi: ExtensionAPI) {
   const hasCG = binaryAvailable(COLGREP_BIN);
   const hasRG = binaryAvailable(RG_BIN);
+  const hasPB = binaryAvailable(PICKBRAIN_BIN);
+  const hasCR = binaryAvailable(CORALINE_BIN);
 
   pi.registerTool({
     name: "smart_search",
     label: "Smart Search",
     description: [
-      "Unified 3-layer code search. Auto-routes based on query intent:",
-      "• Layer 1 (colgrep) — project source code, semantic + hybrid. Best for 'what does X do?' in your repo.",
-      "• Layer 2 (kotadb) — dependencies, node_modules, cross-repo structural queries, impact analysis.",
-      "• Layer 3 (ripgrep) — exact regex, verification, fallback.",
+      "Unified 4-layer code search. Auto-routes based on query intent:",
+      "• Layer 1 (colgrep) — current project, semantic + hybrid.",
+      "• Layer 2 (coraline) — Rust/Zig/Python/Swift/Go/C repos in ~/source.",
+      "• Layer 3 (pickbrain) — agent sessions, memory, past context.",
+      "• Layer 4 (ripgrep) — exact regex, fallback.",
       "",
-      "For exact/regex patterns use the `pattern` field alongside the natural-language `query`.",
-      "Set `scope` to force a specific layer: 'project' | 'deps' | 'exact' | 'auto' (default).",
+      "Use `repo` to search a specific repo in ~/source (e.g. 'surrealdb', 'zig').",
+      "Use `pattern` for exact regex search.",
     ].join("\n"),
     parameters: Type.Object({
       query: Type.String({ description: "Natural language search query" }),
-      pattern: Type.Optional(Type.String({ description: "Regex/literal pattern for ripgrep hybrid" })),
+      pattern: Type.Optional(Type.String({ description: "Regex/literal pattern for ripgrep" })),
+      repo: Type.Optional(Type.String({ description: "Repo name in ~/source (e.g. 'surrealdb', 'zig')" })),
       scope: Type.Optional(
         Type.Union(
           [
             Type.Literal("auto"),
             Type.Literal("project"),
-            Type.Literal("deps"),
+            Type.Literal("source"),
             Type.Literal("exact"),
+            Type.Literal("memory"),
           ],
-          { description: "Force a specific layer. Defaults to 'auto' (inferred from query)." }
+          { description: "Force a specific layer. Defaults to 'auto'." }
         )
       ),
-      limit: Type.Optional(Type.Number({ description: "Max results per layer (default 10)" })),
+      limit: Type.Optional(Type.Number({ description: "Max results (default 10)" })),
     }),
-    execute: async (params, _ctx) => {
-      const { query, pattern, scope: forceScope, limit = 10 } = params;
+    execute: async (_toolCallId, params, _signal, _onUpdate, _ctx) => {
+      const { query, pattern, repo, scope: forceScope, limit = 10 } = params;
       const scope = forceScope ?? "auto";
       const effective = scope === "auto" ? classifyScope(query) : scope;
 
       const sections: string[] = [];
 
-      // ── Layer 1: colgrep (project) ──
-      if (effective === "project" || effective === "auto") {
+      // Layer 2: Coraline (if repo specified or scope is source)
+      if (hasCR && repo) {
+        const out = coraline(query, repo, limit);
+        if (out) sections.push(`## coraline (${repo})\n\n${out}`);
+      } else if (hasCR && effective === "source") {
+        const repoMatch = query.match(/\b(surrealdb|zig)\b/i);
+        if (repoMatch) {
+          const out = coraline(query, repoMatch[1].toLowerCase(), limit);
+          if (out) sections.push(`## coraline (${repoMatch[1]})\n\n${out}`);
+        }
+      }
+
+      // Layer 1: colgrep (current project)
+      if ((effective === "project" || effective === "auto") && !repo) {
         if (hasCG) {
           const cgArgs = ["--exclude-dir=node_modules", "--exclude-dir=vendor", `-k`, String(limit)];
           if (pattern) cgArgs.push("-e", pattern);
           const out = colgrep(query, cgArgs);
-          if (out) sections.push(`## colgrep (project semantic)\n\n${out}`);
+          if (out) sections.push(`## colgrep (project)\n\n${out}`);
         }
       }
 
-      // ── Layer 2: kotadb (deps / structural) ──
-      if (effective === "deps" || (effective === "auto" && sections.length === 0)) {
-        try {
-          const out = await kotadbSearch(query, limit);
-          if (out) sections.push(`## kotadb (structural / dependency)\n\n${out}`);
-        } catch {
-          // fall through to ripgrep fallback
+      // Layer 3: pickbrain (memory)
+      if (effective === "memory" || (effective === "auto" && sections.length === 0)) {
+        if (hasPB) {
+          const out = pickbrain(query, limit);
+          if (out) sections.push(`## pickbrain (memory)\n\n${out}`);
         }
       }
-      // ── Layer 3: ripgrep (exact / fallback) ──
+
+      // Layer 4: ripgrep (exact or fallback)
       const needsRg = effective === "exact" || pattern !== undefined || sections.length === 0;
       if (needsRg && hasRG) {
         const rgPattern = pattern ?? query;
-        const extra = ["--glob=!node_modules/**", "--glob=!vendor/**", "--glob=!dist/**"];
-        const out = ripgrep(rgPattern, process.cwd(), extra);
-        if (out) sections.push(`## ripgrep (exact / fallback)\n\n${out}`);
+        const searchPath = repo ? `${SOURCE_ROOT}/${repo}` : process.cwd();
+        const extra = [
+          "--glob=!node_modules/**",
+          "--glob=!vendor/**",
+          "--glob=!dist/**",
+          "--glob=!target/**",
+          "--glob=!zig-cache/**",
+        ];
+        const out = ripgrep(rgPattern, searchPath, extra);
+        if (out) sections.push(`## ripgrep (exact)\n\n${out}`);
       }
 
-      if (sections.length === 0) {
-        return `No results found across all layers for: "${query}"`;
-      }
+      const text = sections.length === 0
+        ? `No results found for: "${query}"`
+        : sections.join("\n\n---\n\n");
 
-      return sections.join("\n\n---\n\n");
+      return { content: [{ type: "text", text }], details: null };
     },
   });
 }

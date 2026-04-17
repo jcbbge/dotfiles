@@ -1,5 +1,5 @@
 # AGENTS.md — Global Agent Context
-**Updated:** 2026-04-14
+**Updated:** 2026-04-17
 
 This file is loaded by every harness (Claude Code, OpenCode, Pi) as global context.
 It describes the actual current tooling stack. Do not guess — use what is documented here.
@@ -11,6 +11,7 @@ It describes the actual current tooling stack. Do not guess — use what is docu
 | Tool | Status | How to access |
 |------|--------|---------------|
 | KotaDB | **active** | MCP stdio — `mcp__kotadb__<tool>` |
+| Coraline | **active** | MCP stdio — `coraline_*` (33 languages incl. Rust, Zig, Python, Swift) |
 | Substrate | **active** | MCP tools — `mcp__substrate__*` |
 | Composto | **active** | CLI — `/opt/homebrew/bin/composto` |
 | Executor | **REMOVED** | Does not exist. Never reference it. |
@@ -20,11 +21,43 @@ It describes the actual current tooling stack. Do not guess — use what is docu
 
 ---
 
+## Search Tool Priority — 4-Layer Routing
+
+Route before you reach for `Grep` or `Read`:
+
+| Layer | Tool | When |
+|-------|------|------|
+| **1 — colgrep** | `colgrep` (Bash) | Project source — "what does X do in this repo?" Semantic + hybrid. |
+| **2 — KotaDB** | `mcp__kotadb__search` et al. | JS/TS libraries, dependencies, cross-repo, symbol graphs, "what breaks if…" |
+| **3 — Coraline** | `coraline_*` (MCP) | Rust, Zig, Python, Swift, Go, C/C++ — structural AST search, callers, callees, impact. |
+| **4 — ripgrep** | `Grep` tool | Exact regex, literal verification, fallback. |
+
+**Auto-route heuristics:**
+- JS/TS dependency question → **KotaDB first**
+- Rust/Zig/Python/Swift/Go/C project → **Coraline first**
+- Regex or exact literal pattern → **ripgrep first**
+- Everything else → **colgrep first**
+
+**Never jump to `Read` on a library file. Use KotaDB (JS/TS) or Coraline (Rust/Zig/etc).**
+
+---
+
 ## KotaDB — Code Intelligence
+
+**KotaDB is the primary reference manual for all external libraries and packages.** It is live source-code documentation — not a search engine. When you need to understand how a library works, query KotaDB first.
 
 **What:** Structural code analysis. Indexes repos at the AST level — symbols, references, dependencies.
 **DB:** `~/.kotadb/kota.db` (SQLite, fixed path)
 **MCP config:** `~/.claude/mcp.json` — auto-started by Claude Code via stdio.
+
+### `~/source/` — Canonical clone location for KotaDB repos
+
+All repos intended for KotaDB indexing live in `~/source/`. When a library is needed and not indexed:
+1. `git clone <repo> ~/source/<name>`
+2. `mcp__kotadb__index_repository { repository: "owner/repo", localPath: "/Users/jrg/source/<name>" }`
+3. Query via KotaDB
+
+Never read `~/source/` files directly — index them and query through KotaDB.
 
 ### When to use KotaDB
 
@@ -102,6 +135,60 @@ Empty substrate = clean workspace. That is correct.
 
 ---
 
+## Coraline — Multi-Language Code Intelligence
+
+**What:** Semantic code indexing with 33 languages. Rust, Zig, Python, Swift, Go, C/C++, and more.
+**Binary:** `~/.cargo/bin/coraline` (installed via `cargo install coraline`)
+**MCP:** `coraline serve --mcp` — registered in `~/.claude/mcp.json`
+
+### Indexed Repos (in ~/source/)
+
+| Repo | Nodes | Language |
+|------|-------|----------|
+| `surrealdb` | 24,237 | Rust |
+| `zig` | 148,024 | Zig |
+
+### Key MCP Tools
+
+| Tool | Description |
+|------|-------------|
+| `coraline_search` | Find symbols by name or pattern |
+| `coraline_callers` | Find what calls a symbol |
+| `coraline_callees` | Find what a symbol calls |
+| `coraline_impact` | Analyze change impact radius |
+| `coraline_find_symbol` | Find symbols with rich metadata + optional body |
+| `coraline_find_references` | Find all references to a symbol |
+| `coraline_context` | Build structured context for an AI task |
+
+### CLI Usage
+
+```bash
+# Index a new repo
+cd ~/source/<repo> && coraline init && coraline index
+
+# Query symbols
+coraline query "async fn"
+
+# Find callers
+coraline callers <node-id>
+
+# Impact analysis
+coraline impact <node-id>
+```
+
+### Adding a New Repo
+
+```bash
+cd ~/source/<repo>
+coraline init
+coraline index
+# Optional: semantic search
+coraline model download
+coraline embed
+```
+
+---
+
 ## Composto — Code-to-IR Compression
 
 **What:** Converts TypeScript/JS source to compressed IR. 89% fewer tokens.
@@ -125,31 +212,6 @@ Use `TodoWrite` for any session task with 3+ steps.
 - Mark `in_progress` before starting a task
 - Mark `completed` immediately when done — never batch
 - One `in_progress` at a time
-
----
-
-## THE DISPATCH RITUAL
-
-At the end of any session with real generative content — architectural insight, new ideas, genuine surprise, design emergence — close with a dispatch.
-
-**How it works:**
-1. One of us says "dispatch" or "let's create a dispatch"
-2. Everything spoken from that moment until the dispatch is written is the content
-3. Turn-based. Both voices. Verbatim. No cleanup. No polish.
-4. Saved to journal/YYYY-MM-<title-slug>.md
-5. Titled with what emerged, not what was decided
-
-**What it is not:**
-- Not a task list
-- Not a summary
-- Not a retrospective written after the fact
-- Not siloed individual perspectives
-
-**Why:**
-The arrival matters as much as the destination. Ideas emerge in the collision between voices. The roughness is the fidelity. When we return weeks or months later, we read the moment — not a compression of it.
-
-**The rule:**
-Do not convert dispatch content into tickets without first re-reading the dispatch in full. The why lives in the words, not in the extracted action items.
 
 ---
 
