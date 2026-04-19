@@ -4,6 +4,7 @@ Do **not** blindly copy plist files between machines. Existing plists reference 
 
 ## Managed services to recreate
 
+### Brain Stack
 - `dev.brain.executor.plist`
 - `com.jcbbge.anima-mcp.plist`
 - `com.jcbbge.dev-brain-mcp.plist`
@@ -16,6 +17,13 @@ Do **not** blindly copy plist files between machines. Existing plists reference 
 - `dev.anima.emit.plist`
 - `dev.brain.ejection.plist`
 - `dev.brain.process-watchdog.plist`
+
+### Belvedere
+- `com.belvedere.llm-server.plist` — MLX inference server (port 8800)
+- `com.belvedere.tts-server.plist` — Kokoro TTS (port 7200)
+
+### Data Services
+- `com.surrealdb.server.plist` — SurrealDB (port 6000)
 
 ## Install flow
 
@@ -30,7 +38,7 @@ Do **not** blindly copy plist files between machines. Existing plists reference 
    ```
 4. Verify:
    ```bash
-   launchctl list | grep -E 'anima|dev.brain|substrate|kotadb|surreal'
+   launchctl list | grep -E 'anima|dev.brain|substrate|kotadb|surreal|belvedere'
    ```
 
 ## Notes
