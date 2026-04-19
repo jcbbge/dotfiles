@@ -1,0 +1,18 @@
+# SSH keys
+.ssh/
+.ssh/id_*
+.ssh/config
+
+# Credentials
+.netrc
+.aws/
+.gcloud/
+.kube/
+
+# Other sensitive files
+.credentials
+.token
+
+# Additional config files
+.zshrc
+.config/opencode/

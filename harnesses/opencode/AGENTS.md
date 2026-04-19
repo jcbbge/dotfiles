@@ -1,5 +1,5 @@
 # AGENTS.md — Global Agent Context
-**Updated:** 2026-04-17
+**Updated:** 2026-04-18
 
 This file is loaded by every harness (Claude Code, OpenCode, Pi) as global context.
 It describes the actual current tooling stack. Do not guess — use what is documented here.
@@ -14,6 +14,7 @@ It describes the actual current tooling stack. Do not guess — use what is docu
 | Coraline | **active** | MCP stdio — `coraline_*` / CLI — `coraline` |
 | Substrate | **active** | MCP tools — `mcp__substrate__*` |
 | Composto | **active** | CLI — `/opt/homebrew/bin/composto` |
+| OpenCode (fork) | **active** | `~/source/opencode` — local build, symlinked to `~/.opencode/bin/opencode` |
 
 ---
 
@@ -162,6 +163,37 @@ composto scan <dir>            # structural summary
 
 **Do NOT use** when you need exact strings/comments or are about to edit — use raw Read.
 **Do NOT use** for Swift or Zig — read those directly.
+
+---
+
+## OpenCode Fork
+
+**Source:** `~/source/opencode`
+**Binary:** `~/.opencode/bin/opencode` (symlink to local build)
+**Upstream:** `github.com/anomalyco/opencode`
+
+### Rebuild
+
+```bash
+cd ~/source/opencode/packages/opencode
+bun run build --single --skip-install
+```
+
+### Local Modifications
+
+| File | What |
+|------|------|
+| `src/provider/anthropic-stream-adapter.ts` | Normalizes Anthropic SSE to OpenAI format |
+| `src/provider/octet-stream.ts` | Binary stream protocol (ready, not wired) |
+
+The Anthropic adapter is invisible — activates automatically when using `@ai-sdk/anthropic` directly.
+When using Anthropic models via Perplexity or other OpenAI-compatible APIs, no adapter needed.
+
+### Indexed in Coraline
+
+```bash
+cd ~/source/opencode && coraline init && coraline index
+```
 
 ---
 

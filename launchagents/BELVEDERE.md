@@ -9,7 +9,7 @@ Belvedere is a personal cognitive assistant with three persistent services.
 | Service | Port | Purpose | Model |
 |---------|------|---------|-------|
 | **LLM Server** | 8800 | Inference | SuperGemma4-26B (MLX) |
-| **TTS Server** | 7200 | Text-to-speech | Kokoro + Summarization |
+| **TTS Server** | 7200 | Text-to-speech | CosyVoice3 + Summarization |
 | **Memory** | 6000 | Persistent storage | SurrealDB (see SURREALDB.md) |
 
 ---
@@ -90,11 +90,11 @@ Content-Type: application/json
 
 ### Behavior
 
-- **Short text (<100 chars):** Speaks directly
-- **Long text (≥100 chars):** Summarizes using LLM first, then speaks
-- **Voice:** af_heart (default)
+- **Short text (≤150 chars):** Speaks directly
+- **Long text (>150 chars):** Summarizes using LLM first, then speaks
+- **Voices:** david (default), charles
 - **Speed:** 1.1x
-- **Model:** Kokoro TTS (CosyVoice3)
+- **Model:** CosyVoice3 (reference-based voice cloning)
 
 ### Service Management
 

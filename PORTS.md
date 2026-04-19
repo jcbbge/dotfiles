@@ -28,7 +28,7 @@ When you add a new service, add it here first.
 | 4000  | web dev alt  | varies                               | secondary app / API          |
 | 5432  | Postgres     | varies                               | standard — do not reassign   |
 | 6000  | SurrealDB    | launchd `com.surrealdb.server.plist` | persistent, auto-start. was :8002 |
-| 7200  | Belvedere TTS | launchd `com.belvedere.tts-server.plist` | Kokoro TTS with summarization |
+| 7200  | Belvedere TTS | launchd `com.belvedere.tts-server.plist` | CosyVoice3 TTS with summarization |
 | 8800  | Belvedere LLM | launchd `com.belvedere.llm-server.plist` | MLX SuperGemma4-26B inference |
 | 11434 | Ollama       | `ollama serve`                       | upstream default, leave it   |
 
@@ -39,7 +39,7 @@ When you add a new service, add it here first.
 | Port | Service | How it starts | Notes |
 |------|---------|--------------|-------|
 | 6000 | SurrealDB | launchd | persistent memory store |
-| 7200 | Belvedere TTS | launchd | text-to-speech (Kokoro) |
+| 7200 | Belvedere TTS | launchd | text-to-speech (CosyVoice3) |
 | 8800 | Belvedere LLM | launchd | SuperGemma4-26B inference |
 | 11434 | Ollama | launchd | local AI models |
 

@@ -4,3 +4,5 @@
 
 SurrealDB|launchd|6000|com.surrealdb.server|com.surrealdb.server|port
 Ollama|launchd|11434|com.ollama.server|com.ollama.server|port
+TTS|launchd|7200|com.belvedere.tts-server|com.belvedere.tts-server|port
+LLM|launchd|8800|com.belvedere.llm-server|com.belvedere.llm-server|port
