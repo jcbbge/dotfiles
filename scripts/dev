@@ -182,29 +182,31 @@ PYEOF
     printf '\n'
 }
 
-# ── MODELS: OLLAMA ────────────────────────────────────────────────────────────
-_panel_ollama() {
+# ── MODELS: MLX ───────────────────────────────────────────────────────────────
+_panel_mlx() {
+    local hub=~/.cache/huggingface/hub
+    [[ ! -d "$hub" ]] && return
+
+    # Find MLX models in HuggingFace cache
+    local models=$(find "$hub" -maxdepth 1 -type d -name 'models--*mlx*' 2>/dev/null | sort)
+    [[ -z "$models" ]] && return
+
     local cols=$(tput cols 2>/dev/null || printf 100)
-    printf "${BOLD}${CYN}  LOCAL MODELS${R}  ${DIM}ollama${R}\n"
+    printf "${BOLD}${CYN}  LOCAL MODELS${R}  ${DIM}mlx${R}\n"
     printf "${DIM}  %s${R}\n" "$(_hr $((cols-4)))"
 
-    if ! command -v ollama &>/dev/null; then
-        printf "  ${DIM}ollama not found${R}\n\n"
-        return
-    fi
-
-    local loaded=$(ollama ps 2>/dev/null | tail -n +2)
-
-    ollama list 2>/dev/null | tail -n +2 | while IFS= read -r line; do
-        [[ -z "$line" ]] && continue
-        local name=$(printf '%s' "$line" | awk '{print $1}')
-        local size=$(printf '%s' "$line" | awk '{print $3,$4}')
-        local age=$(printf '%s' "$line" | awk '{print $5,$6,$7}')
-        if printf '%s' "$loaded" | grep -q "^$name"; then
-            printf "  ${GRN}●${R} ${WHT}%-38s${R} ${GRN}loaded${R}   %-10s\n" "$name" "$size"
-        else
-            printf "  ${DIM}○${R} ${DIM}%-38s${R} ${DIM}idle${R}     %-10s  ${DIM}%s${R}\n" "$name" "$size" "$age"
+    printf '%s\n' "$models" | while IFS= read -r dir; do
+        [[ -z "$dir" ]] && continue
+        local raw=$(basename "$dir")
+        # models--org--name -> org/name
+        local name=$(printf '%s' "$raw" | sed 's/^models--//; s/--/\//g')
+        # Get size of blobs dir (actual model weights)
+        local blobs="$dir/blobs"
+        local size='-'
+        if [[ -d "$blobs" ]]; then
+            size=$(du -sh "$blobs" 2>/dev/null | cut -f1)
         fi
+        printf "  ${DIM}◈${R}  ${WHT}%-44s${R}  %s\n" "$name" "$size"
     done
     printf '\n'
 }
@@ -309,7 +311,7 @@ _status() {
     _panel_services "$jfile"
     _panel_ports    "$jfile"
     _panel_mcp      "$jfile"
-    _panel_ollama
+    _panel_mlx
     _panel_whisper
     _panel_apple
     _panel_system   "$jfile"
@@ -551,11 +553,18 @@ _svc_up() {
         process)   eval "$st" &>/dev/null & ;;
         ephemeral) printf "${YLW}  %s is ephemeral${R}\n" "$nm"; return ;;
     esac
-    sleep 1
-    local info=$(_svc_info "$nm" "$tp" "$po" "$st")
-    [[ $(printf '%s' "$info" | cut -f1) == UP ]] \
-        && printf "  ${GRN}●${R} ${WHT}%s${R} up\n" "$nm" \
-        || printf "  ${RED}✖${R} ${WHT}%s${R} failed\n" "$nm"
+    # Wait for service to come up (poll for up to 5 seconds)
+    local tries=0
+    while (( tries < 10 )); do
+        sleep 0.5
+        local info=$(_svc_info "$nm" "$tp" "$po" "$st")
+        [[ $(printf '%s' "$info" | cut -f1) == UP ]] && {
+            printf "  ${GRN}●${R} ${WHT}%s${R} up\n" "$nm"
+            return 0
+        }
+        (( tries++ ))
+    done
+    printf "  ${RED}✖${R} ${WHT}%s${R} failed\n" "$nm"
 }
 
 _svc_down() {
@@ -602,10 +611,16 @@ _all_up() {
                 launchd) launchctl start "$st" 2>/dev/null ;;
                 process) eval "$st" &>/dev/null & ;;
             esac
-            sleep 2
-            info=$(_svc_info "$nm" "$tp" "$po" "$st")
+            # Poll for up to 5 seconds
+            local tries=0 ok=0
+            while (( tries < 10 )); do
+                sleep 0.5
+                info=$(_svc_info "$nm" "$tp" "$po" "$st")
+                [[ $(printf '%s' "$info" | cut -f1) == UP ]] && { ok=1; break; }
+                (( tries++ ))
+            done
             printf "\033[1A\033[2K"
-            [[ $(printf '%s' "$info" | cut -f1) == UP ]] \
+            (( ok )) \
                 && printf "  ${GRN}●${R} %-20s up\n" "$nm" \
                 || printf "  ${RED}✖${R} %-20s failed\n" "$nm"
         fi
@@ -680,9 +695,9 @@ case "${1:-}" in
         [[ -n "${2:-}" ]] && _svc_down "$2" || _all_down ;;
     restart)
         if [[ -n "${2:-}" ]]; then
-            _svc_down "$2"; sleep 1; _svc_up "$2"
+            _svc_down "$2"; sleep 2; _svc_up "$2"
         else
-            _all_down; sleep 1; _all_up
+            _all_down; sleep 2; _all_up
         fi ;;
     help|-h|--h|-help|--help)
         _help ;;
