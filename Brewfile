@@ -52,3 +52,4 @@ cask "font-monaspace"
 cask "mitmproxy"
 cask "only-switch"
 cask "orbstack"
+cask "pika"                   # color picker
