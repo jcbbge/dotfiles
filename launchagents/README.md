@@ -4,6 +4,10 @@ Do **not** blindly copy plist files between machines. Existing plists reference 
 
 ## Managed services to recreate
 
+### System Services (all-encompassing, plug-and-play, every project connects here)
+- `com.surrealdb.server.plist` — SurrealDB on port 6000 — see [SURREALDB.md](./SURREALDB.md)
+- `com.localllm.server.plist` — mlx-omni-server (OpenAI-compatible LLM) on port 10240 — see [LOCALLLM.md](./LOCALLLM.md)
+
 ### Brain Stack
 - `dev.brain.executor.plist`
 - `com.jcbbge.anima-mcp.plist`
@@ -18,12 +22,9 @@ Do **not** blindly copy plist files between machines. Existing plists reference 
 - `dev.brain.ejection.plist`
 - `dev.brain.process-watchdog.plist`
 
-### Belvedere
-- `com.belvedere.llm-server.plist` — MLX inference server (port 8800)
+### Belvedere (project-specific — do NOT use from other projects)
+- `com.belvedere.llm-server.plist` — MLX inference server (port 8800) — see [BELVEDERE.md](./BELVEDERE.md)
 - `com.belvedere.tts-server.plist` — Kokoro TTS (port 7200)
-
-### Data Services
-- `com.surrealdb.server.plist` — SurrealDB (port 6000)
 
 ## Install flow
 
